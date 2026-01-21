@@ -1,0 +1,28 @@
+[package]
+name = "pow"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+console-subscriber = "0.5.0"
+anyhow.workspace = true
+tokio-util.workspace = true
+paste.workspace = true
+
+pow-macro = { path = "../pow-macro" }
+pow-packets = { path = "../pow-packets" }
+pow-net = { path = "../pow-net"}
+
+[dev-dependencies]
+regex = { version = "1", features = ["unicode-case"] }
+tracing-test = "0.1"
+
+[build-dependencies]
+built = { version = "0.8", features = ["git2"] }

@@ -1,0 +1,15 @@
+{
+    "pipes": [
+        {
+            "source": {
+                "type": "grunt",
+                "host": "localhost:8080"
+            },
+            "destination": {
+                "type": "grunt",
+                "host": "localhost:8081"
+            }
+        }
+    ],
+    "background_threads": 5
+}
