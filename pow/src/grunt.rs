@@ -39,11 +39,8 @@ mod test {
         assert!(client.ip().is_ipv4());
 
         for _ in 0..10 {
-            // TODO: I don't like having to box that packet into a sum type
-            // just for it to be unboxed right after, but I don't know how
-            // to properly fix this (yet)
-            let packet: Packet = match client.ip() {
-                IpAddr::V4(addr) => LogonChallengeRequest {
+            match client.ip() {
+                IpAddr::V4(addr) => client.send(LogonChallengeRequest {
                     game: 0x00576F57, // WoW\0
                     version: Version::parse("4.3.4.15595"),
                     platform: 0x00783836, // x86\0
@@ -52,13 +49,9 @@ mod test {
                     timezone: 0x3C,
                     address: addr,
                     account_name: "pow".to_string()
-                },
+                }).await.expect("Packet couldn't be sent"),
                 IpAddr::V6(..) => panic!("Not an ipv4 address")
-            }.into();
-
-            client.send(packet)
-                .await
-                .expect("Packet couldn't be sent");
+            }
         }
         
         // Disconnect the client
