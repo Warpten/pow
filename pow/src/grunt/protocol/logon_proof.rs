@@ -48,8 +48,9 @@ pub struct LogonProofRequest {
 
 impl Payload for LogonProofRequest {
     type Protocol = GruntProtocol;
+    type Identifier = GruntIdentifier;
 
-    fn identifier(&self) -> <Self::Protocol as pow_packets::Protocol>::Identifier {
+    fn identifier(&self) -> Self::Identifier {
         GruntIdentifier(0x01)
     }
 

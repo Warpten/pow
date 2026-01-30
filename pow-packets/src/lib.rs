@@ -33,8 +33,6 @@ pub trait Identifier: Sized {
 /// A protocol is in charge of controlling how [`Payload`]s are (de)serialized
 /// from a stream.
 pub trait Protocol: Sized {
-    type Identifier: Identifier<Protocol = Self>;
-
     /// This function:
     /// - reads an [`Identifier`] by calling [`Identifier::recv`].
     /// - switches on the value of that identifier, parses the correct [`Payload`]
@@ -58,7 +56,13 @@ pub trait Protocol: Sized {
     /// - `dest`: A stream that can be written to.
     /// - `payload`: A [`Payload`] to send.
     fn send<D, P>(&mut self, dest: &mut D, payload: P) -> impl Future<Output = Result<()>>
-        where D: WriteExt, P: Payload<Protocol = Self>;
+        where D: WriteExt, P: Payload<Protocol = Self>
+    {
+        async move {
+            payload.identifier().send(dest, self).await?;
+            payload.send(dest, self).await
+        }   
+    }
 }
 
 pub trait Serializable: Sized {
@@ -86,8 +90,9 @@ pub trait Serializable: Sized {
 /// A payload is an object that can be serialized, and that is tied to an identifier.
 pub trait Payload: Sized {
     type Protocol: Protocol;
+    type Identifier: Identifier<Protocol = Self::Protocol>;
 
-    fn identifier(&self) -> <Self::Protocol as Protocol>::Identifier;
+    fn identifier(&self) -> Self::Identifier;
 
     /// Reads this object from the given stream, using serialization parameters
     /// provided by the protocol.

@@ -66,6 +66,7 @@ impl Debug for Version {
 
 impl Payload for LogonChallengeRequest {
     type Protocol = GruntProtocol;
+    type Identifier = GruntIdentifier;
 
     fn identifier(&self) -> GruntIdentifier {
         GruntIdentifier(0x00)
@@ -155,8 +156,9 @@ pub enum LogonChallengeResponse {
 
 impl Payload for LogonChallengeResponse {
     type Protocol = GruntProtocol;
+    type Identifier = GruntIdentifier;
     
-    fn identifier(&self) -> GruntIdentifier {
+    fn identifier(&self) -> Self::Identifier {
         GruntIdentifier(0x00)
     }
 
