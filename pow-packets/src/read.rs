@@ -1,6 +1,8 @@
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use crate::errors::Error;
+
 macro_rules! parser {
     (decl read $($ty:ident),+ $(,)?) => {
         $(
@@ -27,6 +29,29 @@ macro_rules! parser {
             }
         )+
     };
+    (limited read $($ty:ident),+ $(,)?) => {
+        $(
+            paste::paste! {
+                async fn [<read_ $ty _be>]<T: From<$ty>>(&mut self) -> Result<T> {
+                    if self.limit < std::mem::size_of::<$ty>() {
+                        Err(Error::EOF.into())
+                    } else {
+                        self.limit -= std::mem::size_of::<$ty>();
+                        self.inner.[<read_ $ty _be>]().await
+                    }
+                }
+
+                async fn [<read_ $ty _le>]<T: From<$ty>>(&mut self) -> Result<T> {
+                    if self.limit < std::mem::size_of::<$ty>() {
+                        Err(Error::EOF.into())
+                    } else {
+                        self.limit -= std::mem::size_of::<$ty>();
+                        self.inner.[<read_ $ty _le>]().await
+                    }
+                }
+            }
+        )+
+    }
 }
 
 /// Provides reading utility methods on an object.
@@ -34,7 +59,14 @@ macro_rules! parser {
 /// This trait is a Rust extension trait and is implemented for any type that implements [`AsyncRead`] and [`Unpin`].
 /// The internal implementation relies on [`AsyncReadExt`]; this API adds methods and makes endianness explicit at the
 /// call site, whereas [`AsyncReadExt`] only makes it explicit for little-endian.
-pub trait ReadExt: Unpin {
+pub trait ReadExt: Sized {
+    /// Creates an adaptor which reads at most [`limit`] bytes from it.
+    /// 
+    /// This function returns a new instance of [`ReadExt`] which will read at most `limit` bytes, after which
+    /// it will always return EOF ([`Error::EOF`]). Any read error will not count towards the number of bytes read
+    /// and future calls may succeed.
+    fn take<'a>(&'a mut self, limit: usize) -> Take<'a, Self>;
+
     /// Reads a null-terminated string from the buffer.
     /// 
     /// # Arguments
@@ -83,6 +115,10 @@ pub trait ReadExt: Unpin {
 }
 
 impl<Target> ReadExt for Target where Target: AsyncRead + Unpin {
+    fn take<'a>(&'a mut self, limit: usize) -> Take<'a, Self> {
+        Take { inner: self, limit }
+    }
+
     fn read_u8<T: From<u8>>(&mut self) -> impl Future<Output = Result<T>> {
         async {
             Ok(AsyncReadExt::read_u8(self).await?.into())
@@ -122,3 +158,55 @@ impl<Target> ReadExt for Target where Target: AsyncRead + Unpin {
     parser! { impl read u16, u32, u64, u128, i16, i32, i64, i128, f32, f64 }
 }
 
+pub struct Take<'a, Inner> {
+    inner: &'a mut Inner,
+    limit: usize
+}
+
+impl<Inner> ReadExt for Take<'_, Inner>
+    where Inner: ReadExt
+{
+    fn take(&mut self, limit: usize) -> Take<'_, Self> {
+        Take { inner: self, limit }
+    }
+
+    async fn read_u8<T: From<u8>>(&mut self) -> Result<T> {
+        if self.limit == 0 {
+            Err(Error::EOF.into())
+        } else {
+            let value = self.inner.read_u8().await?;
+            self.limit -= 1;
+
+            Ok(value)
+        }
+    }
+
+    async fn read_i8<T: From<i8>>(&mut self) -> Result<T> {
+        if self.limit == 0 {
+            Err(Error::EOF.into())
+        } else {
+            self.limit -= 1;
+            self.inner.read_i8().await
+        }
+    }
+
+    async fn read_slice(&mut self, size: usize) -> Result<Box<[u8]>> {
+        if self.limit < size {
+            Err(Error::EOF.into())
+        } else {
+            self.limit -= size;
+            self.inner.read_slice(size).await
+        }
+    }
+
+    async fn read_exact_slice<const N: usize>(&mut self) -> Result<[u8; N]> {
+        if self.limit < N {
+            Err(Error::EOF.into())
+        } else {
+            self.limit -= N;
+            self.inner.read_exact_slice().await
+        }
+    }
+
+    parser! { limited read u16, u32, u64, u128, i16, i32, i64, i128, f32, f64 }
+}

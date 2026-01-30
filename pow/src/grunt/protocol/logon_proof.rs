@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
-use pow_packets::{ReadExt, Serializable, WriteExt};
+use pow_packets::{Payload, ReadExt, Serializable, WriteExt};
 
 use anyhow::Result;
-use crate::grunt::protocol::{GruntProtocol, SecurityProof};
+use crate::grunt::protocol::{GruntIdentifier, GruntProtocol, SecurityProof};
 
 #[derive(Debug)]
 pub struct TelemetryKey {
@@ -46,8 +46,12 @@ pub struct LogonProofRequest {
     pub security: SecurityProof,
 }
 
-impl Serializable for LogonProofRequest {
+impl Payload for LogonProofRequest {
     type Protocol = GruntProtocol;
+
+    fn identifier(&self) -> <Self::Protocol as pow_packets::Protocol>::Identifier {
+        GruntIdentifier(0x01)
+    }
 
     async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
         where S: ReadExt

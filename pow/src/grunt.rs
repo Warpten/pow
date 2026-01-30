@@ -53,6 +53,8 @@ mod test {
                 IpAddr::V6(..) => panic!("Not an ipv4 address")
             }
         }
+
+        // TODO: Assert that the server receives correct data.
         
         // Disconnect the client
         client.disconnect()

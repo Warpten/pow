@@ -54,7 +54,7 @@ impl Serializable for LoginResult {
             0x0E => LoginResult::SuccessSurvey,
             0x0F => LoginResult::ParentalControl,
             0x10 if protocol.version == 8 => LoginResult::LockedEnforced,
-            _ => panic!("Unknown login result")
+            _ => panic!("Unknown login result {}", value)
         })
     }
 
@@ -78,7 +78,7 @@ impl Serializable for LoginResult {
             LoginResult::SuccessSurvey => dest.write_u8(0x0E),
             LoginResult::ParentalControl => dest.write_u8(0x0F),
             LoginResult::LockedEnforced if protocol.version == 8 => dest.write_u8(0x10),
-            _ => panic!("Unknown login result")
+            _ => panic!("Unknown login result {:?}", self)
         }
     }
 }

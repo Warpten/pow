@@ -74,11 +74,10 @@ impl Payload for LogonChallengeRequest {
     async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
         where S: ReadExt
     {
-        let header: [u8; 2] = source.read_exact_slice().await?;
+        protocol.version = source.read_u8().await?;
 
-        protocol.version = header[0];
-
-        let size = header[1] as usize;
+        let size: usize = source.read_u8().await?;
+        let mut source = source.take(size);
 
         let game = source.read_u32_le().await?;
         
