@@ -127,13 +127,14 @@ pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
         let method_ident = format_ident!("handle_{}", type_ident.to_snake_case());
 
         trait_methods.push(quote! {
-            fn #method_ident(&mut self, msg: #ty) -> impl ::core::future::Future<Output = anyhow::Result<()>>;
+            fn #method_ident<D>(&mut self, msg: #ty, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
+                where D: ::pow_packets::WriteExt;
         });
 
         match_arms.push(quote! {
             #id => {
                 let msg = <#ty as ::pow_packets::Payload>::recv(source, self).await?;
-                <Self as #trait_ident>::#method_ident(self, msg).await
+                <Self as #trait_ident>::#method_ident(self, msg, dest).await
             }
         });
     }
@@ -155,8 +156,8 @@ pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
 
         #[doc = "This implementation of Protocol was automatically generated."]
         impl ::pow_packets::Protocol for #struct_ident {
-            fn process_incoming<S>(&mut self, source: &mut S) -> impl ::core::future::Future<Output = anyhow::Result<()>>
-                where S : ::pow_packets::ReadExt
+            fn process_incoming<S, D>(&mut self, source: &mut S, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
+                where S : ::pow_packets::ReadExt, D: ::pow_packets::WriteExt
             {
                 async {
                     let identifier = <#identifier_ty as ::pow_packets::Identifier>::recv(source, self).await?;
@@ -206,32 +207,30 @@ mod tests {
 
             #[doc = "This trait expects a complete implementation of every handler associated with a protocol."]
             trait GruntProtocolImplementation {
-                fn handle_logon_challenge_request(
-                    &mut self,
-                    msg: LogonChallengeRequest,
-                ) -> impl ::core::future::Future<Output = anyhow::Result<()>>;
-                fn handle_logon_proof_request(
-                    &mut self,
-                    msg: LogonProofRequest,
-                ) -> impl ::core::future::Future<Output = anyhow::Result<()>>;
+                fn handle_logon_challenge_request<D>(&mut self, msg: LogonChallengeRequest, dest: &mut D)
+                    -> impl ::core::future::Future<Output = anyhow::Result<()>>
+                        where D: ::pow_packets::WriteExt;
+
+                fn handle_logon_proof_request<D>(&mut self, msg: LogonProofRequest, dest: &mut D)
+                    -> impl ::core::future::Future<Output = anyhow::Result<()>>
+                        where D: ::pow_packets::WriteExt;
             }
             
             #[doc = "This implementation of Protocol was automatically generated."]
             impl ::pow_packets::Protocol for GruntProtocol {
-                fn process_incoming<S>(&mut self, source: &mut S) -> impl ::core::future::Future<Output = anyhow::Result<()>>
-                where
-                    S: ::pow_packets::ReadExt,
+                fn process_incoming<S, D>(&mut self, source: &mut S, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
+                    where S: ::pow_packets::ReadExt, D: ::pow_packets::WriteExt
                 {
                     async {
                         let identifier = <GruntIdentifier as ::pow_packets::Identifier>::recv(source, self).await?;
                         match identifier {
                             0x00 => {
                                 let msg = <LogonChallengeRequest as ::pow_packets::Payload>::recv(source, self).await?;
-                                <Self as GruntProtocolImplementation>::handle_logon_challenge_request(self, msg).await
+                                <Self as GruntProtocolImplementation>::handle_logon_challenge_request(self, msg, dest).await
                             }
                             0x01 => {
                                 let msg = <LogonProofRequest as ::pow_packets::Payload>::recv(source, self).await?;
-                                <Self as GruntProtocolImplementation>::handle_logon_proof_request(self, msg).await
+                                <Self as GruntProtocolImplementation>::handle_logon_proof_request(self, msg, dest).await
                             }
                             _ => Err(::anyhow::anyhow!("Unknown identifier")),
                         }

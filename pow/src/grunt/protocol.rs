@@ -26,12 +26,17 @@ pub struct GruntProtocol {
     pub version: u8,
 }
 
+#[allow(unused_variables)]
 impl GruntProtocolImplementation for GruntProtocol {
-    async fn handle_logon_challenge_request(&mut self, msg: LogonChallengeRequest) -> Result<()>  {
+    async fn handle_logon_challenge_request<D>(&mut self, msg: LogonChallengeRequest, dest: &mut D) -> Result<()> 
+        where D: WriteExt
+    {
         todo!()
     }
 
-    async fn handle_logon_proof_request(&mut self, msg: LogonProofRequest) -> Result<()>  {
+    async fn handle_logon_proof_request<D>(&mut self, msg: LogonProofRequest, dest: &mut D) -> Result<()>
+        where D: WriteExt
+    {
         todo!()
     }
 }

@@ -43,8 +43,9 @@ pub trait Protocol: Sized {
     /// # Arguments
     /// 
     /// - `source`: The stream to read from.
-    fn process_incoming<S>(&mut self, source: &mut S) -> impl Future<Output = Result<()>>
-        where S: ReadExt;
+    /// - `dest`: The stream to which one or multiple [`Payload`]s may be sent.
+    fn process_incoming<S, D>(&mut self, source: &mut S, dest: &mut D) -> impl Future<Output = Result<()>>
+        where S: ReadExt, D: WriteExt;
 
     /// This function:
     /// - Extracts an [`Identifier`] derived from the [`Payload`] and immediately

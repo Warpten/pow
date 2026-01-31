@@ -74,7 +74,7 @@ impl RemotePeer for GruntClient {
             loop {
                 tokio::select! {
                     _ = self.token.cancelled() => break,
-                    _ = self.protocol.process_incoming(&mut self.reader) => ()
+                    _ = self.protocol.process_incoming(&mut self.reader, &mut self.sender) => ()
                 }
             }
 
