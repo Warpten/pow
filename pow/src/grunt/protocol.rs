@@ -13,40 +13,25 @@ pub use realmlist::*;
 pub use security::*;
 
 use anyhow::Result;
-use pow_packets::{Identifier, Payload, Protocol, ReadExt, Serializable, WriteExt};
 use pow_macro::protocol;
 
+use crate::packets::{Identifier, Payload, Protocol, ReadExt, Serializable, WriteExt};
 use crate::grunt::protocol::{self};
 
 #[protocol(identifier = GruntIdentifier, handlers = [
     handler(ty = LogonChallengeRequest, identifier = GruntIdentifier(0x00)),
-    handler(ty = LogonProofRequest, identifier = GruntIdentifier(0x01))
+    // handler(ty = LogonProofRequest, identifier = GruntIdentifier(0x01))
 ])]
-pub struct GruntProtocol {
-    pub version: u8,
+pub trait GruntProtocol: Send + Sync + 'static {
+    fn version(&self) -> u8;
+    fn set_version(&mut self, version: u8);
 }
 
-#[allow(unused_variables)]
-impl GruntProtocolImplementation for GruntProtocol {
-    async fn handle_logon_challenge_request<D>(&mut self, msg: LogonChallengeRequest, dest: &mut D) -> Result<()> 
-        where D: WriteExt
-    {
-        todo!()
-    }
-
-    async fn handle_logon_proof_request<D>(&mut self, msg: LogonProofRequest, dest: &mut D) -> Result<()>
-        where D: WriteExt
-    {
-        todo!()
-    }
-}
-
+#[derive(Debug)]
 pub struct GruntIdentifier(/* command */ u8);
 
-impl Identifier for GruntIdentifier {
-    type Protocol = GruntProtocol;
-
-    fn recv<S>(source: &mut S, _: &mut Self::Protocol) -> impl Future<Output = Result<Self>>
+impl<Protocol: GruntProtocol> Identifier<Protocol> for GruntIdentifier {
+    fn recv<S>(source: &mut S, _: &mut Protocol) -> impl Future<Output = Result<Self>>
         where S: ReadExt
     {
         async {
@@ -54,7 +39,7 @@ impl Identifier for GruntIdentifier {
         }
     }
 
-    fn send<D>(self, dest: &mut D, _: &mut Self::Protocol) -> impl Future<Output = Result<()>>
+    fn send<D>(self, dest: &mut D, _: &mut Protocol) -> impl Future<Output = Result<()>>
         where D: WriteExt
     {
         dest.write_u8(self.0)

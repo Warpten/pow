@@ -1,7 +1,9 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::errors::Error;
+use crate::packets::errors::Error;
 
 macro_rules! parser {
     (decl read $($ty:ident),+ $(,)?) => {

@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use pow_macro::EnumKind;
-use pow_packets::{ReadExt, Serializable, WriteExt};
 
 use anyhow::Result;
+use crate::packets::{ReadExt, Serializable, WriteExt};
 use crate::grunt::protocol::GruntProtocol;
 
 #[derive(PartialEq, EnumKind, Debug)]
@@ -14,13 +14,11 @@ pub enum SecurityChallenge {
     Authenticator(u8)
 }
 
-impl Serializable for SecurityChallenge {
-    type Protocol = GruntProtocol;
-
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+impl<P: GruntProtocol> Serializable<P> for SecurityChallenge {
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
-        if protocol.version != 2 {
+        if protocol.version() != 2 {
             let kind = source.read_u8().await?;
             Ok(match kind {
                 0 => Self::None,
@@ -49,10 +47,10 @@ impl Serializable for SecurityChallenge {
         }
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(&self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
-        if protocol.version == 2 {
+        if protocol.version() == 2 {
             return Ok(());
         }
 
@@ -87,13 +85,11 @@ pub enum SecurityProof {
     Authenticator(String)
 }
 
-impl Serializable for SecurityProof {
-    type Protocol = GruntProtocol;
-
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+impl<P: GruntProtocol> Serializable<P> for SecurityProof {
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
-        if protocol.version != 2 {
+        if protocol.version() != 2 {
             let kind = source.read_u8().await?;
             Ok(match kind {
                 0 => Self::None,
@@ -120,10 +116,10 @@ impl Serializable for SecurityProof {
         }
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(&self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
-        if protocol.version == 2 {
+        if protocol.version() == 2 {
             assert!(*self == Self::None);
             return Ok(());
         }

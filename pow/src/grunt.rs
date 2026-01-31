@@ -7,11 +7,60 @@ pub mod protocol;
 #[cfg(test)]
 mod test {
     use std::net::IpAddr;
+    use std::sync::{Arc, LazyLock, RwLock};
 
     use pow_net::{Acceptor, LocalPeer, Service};
     use tokio_util::sync::CancellationToken;
 
+    use crate::grunt::protocol::GruntProtocol;
     use crate::grunt::{connection::GruntClient, protocol::{LogonChallengeRequest, Version}, server::GruntServer};
+
+    struct TestingProtocol {
+        pub version: u8,
+        pub recv_count: usize,
+    }
+    impl GruntProtocol for Arc<RwLock<TestingProtocol>> {
+        fn version(&self) -> u8 {
+            self.read().unwrap().version
+        }
+
+        fn set_version(&mut self, version: u8) {
+            self.write().unwrap().version = version;
+        }
+        
+        fn handle_logon_challenge_request<D>(&mut self, msg: LogonChallengeRequest, dest: &mut D) -> 
+            impl ::core::future::Future<Output = anyhow::Result<()>>
+            where D:crate::packets::WriteExt
+        {
+            async move {
+                assert_eq!(msg.game, 0x00576F57);
+                assert_eq!(msg.version.major, 4, "Invalid version");
+                assert_eq!(msg.version.minor, 3, "Invalid version");
+                assert_eq!(msg.version.patch, 4, "Invalid version");
+                assert_eq!(msg.version.build, 15595, "Invalid version");
+                assert_eq!(msg.platform, 0x00783836);
+                assert_eq!(msg.os, 0x4F5358);
+                assert_eq!(msg.locale, 0x656E5553);
+                assert_eq!(msg.account_name, "pow");
+
+                self.write().unwrap().recv_count += 1;
+
+                println!("Received");
+                Ok(())
+            }
+        }
+    }
+
+    fn make_grunt_protocol() -> Arc<RwLock<TestingProtocol>> {
+        (&*PROTOCOL).clone()
+    }
+
+    static PROTOCOL: LazyLock<Arc<RwLock<TestingProtocol>>> = LazyLock::new(|| {
+        Arc::new(RwLock::new(TestingProtocol {
+            version: 8,
+            recv_count: 0
+        }))
+    });
 
     #[tokio::test]
     #[tracing_test::traced_test]
@@ -19,7 +68,7 @@ mod test {
         // Start the server
         let control = CancellationToken::new();
         let server = {
-            let server = GruntServer::new("127.0.0.1:8080", control.child_token());
+            let server = GruntServer::new("127.0.0.1:8080", control.child_token(), make_grunt_protocol);
 
             // This test doesn't use run() because we need the listener to
             // be open for the client to connect.
@@ -31,11 +80,13 @@ mod test {
                     .expect("Grunt server could not start listening.");
             })
         };
-        
-        // Now spin up a client and send LOGON_CHALLENGE.
-        let mut client = GruntClient::connect("127.0.0.1:8080", 8, CancellationToken::new())
-            .await
-            .expect("Unable to connect to local server");
+
+        // Now spin up a client, use a testing protocol, and send LOGON_CHALLENGE.
+        let mut client = GruntClient::connect(
+            "127.0.0.1:8080",
+            make_grunt_protocol(),
+            CancellationToken::new()
+        ).await.expect("Unable to connect to local server");
         assert!(client.ip().is_ipv4());
 
         for _ in 0..10 {
@@ -54,8 +105,9 @@ mod test {
             }
         }
 
-        // TODO: Assert that the server receives correct data.
-        
+        // TODO: Assert that the server's maintained peer's recv_count is 10.
+        assert_eq!(client.protocol.read().unwrap().recv_count, 10);
+
         // Disconnect the client
         client.disconnect()
             .await
@@ -64,5 +116,7 @@ mod test {
         // Stop the server
         control.cancel();
         server.await.expect("Server should have stopped");
+
+        
     }
 }

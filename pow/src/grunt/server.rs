@@ -2,30 +2,32 @@ use pow_net::{Acceptor, RemotePeer, Service};
 use anyhow::Result;
 use tokio::{io::{BufReader, BufWriter}, net::TcpListener, sync::mpsc};
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::grunt::{protocol::GruntProtocol, connection::GruntClient};
 
 /// A [`GruntServer`] is a service that accepts connections from clients and communicates with them using the Grunt protocol.
 /// It is therefore a [`Server`] and an [`Acceptor`].
-pub struct GruntServer {
+pub struct GruntServer<P> {
     addr: String,
     token: CancellationToken,
+    protocol_factory: fn() -> P,
 }
 
-impl GruntServer {
-    pub fn new<A>(bind: A, token: CancellationToken) -> Self
+impl<P: GruntProtocol> GruntServer<P> {
+    pub fn new<A>(bind: A, token: CancellationToken, protocol_factory: fn() -> P) -> Self
         where A : Into<String>
     {
         Self {
             addr: bind.into(),
             token,
+            protocol_factory
         }
     }
 }
 
-impl Acceptor for GruntServer {
-    type Peer = GruntClient;
+impl<P: GruntProtocol> Acceptor for GruntServer<P> {
+    type Peer = GruntClient<P>;
     type Listener = TcpListener;
 
     fn bind(&self) -> impl Future<Output = Result<Self::Listener>> {
@@ -44,14 +46,14 @@ impl Acceptor for GruntServer {
                 token: self.token.child_token(),
                 sender: BufWriter::new(rx),
                 reader: BufReader::new(tx),
-                protocol: GruntProtocol { version: 0 }
+                protocol: (self.protocol_factory)()
             })
         }
     }
 }
 
-impl Service for GruntServer {
-    type Connection = GruntClient;
+impl<P: GruntProtocol> Service for GruntServer<P> {
+    type Connection = GruntClient<P>;
     type Listener = TcpListener;
 
     fn token(&self) -> &CancellationToken {
@@ -67,14 +69,17 @@ impl Service for GruntServer {
                 loop {
                     tokio::select! {
                         _ = queue_token.cancelled() => {
+                            info!("Cancelling listen");
                             return;
                         },
                         Some(mut conn) = rx.recv() => {
+                            info!("Received client");
+
                             tokio::spawn(async move {
                                 // There's a token on the connection itself... that was derived from
                                 // this server's token. It'll stop update() appropriately.
-                                while let Err(e) = conn.update().await {
-                                    error!("{}: {}", conn.ip(), e);
+                                loop {
+                                    let _ = conn.update().await;
                                 }
                             });
                         }
@@ -84,10 +89,12 @@ impl Service for GruntServer {
 
             loop {
                 tokio::select! {
-                    _ = self.token().cancelled() => break,
+                    biased;
+
                     Ok(conn) = self.next(&listener) => {
                         tx.send(conn).await?;
                     }
+                    // _ = self.token().cancelled() => break,
                 }
             }
 

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -35,6 +37,8 @@ macro_rules! parser {
 /// The internal implementation relies on [`AsyncWriteExt`]; this API adds methods and makes endianness explicit at the
 /// call site, whereas [`AsyncWriteExt`] only makes it explicit for little-endian.
 pub trait WriteExt: Unpin {
+    fn flush(&mut self) -> impl Future<Output = Result<()>>;
+
     fn write_cstring<S: AsRef<str>>(&mut self, str: S) -> impl Future<Output = Result<()>> {
         async move {
             self.write_slice(str.as_ref().as_bytes()).await?;
@@ -57,6 +61,12 @@ pub trait WriteExt: Unpin {
 }
 
 impl<Target> WriteExt for Target where Target: AsyncWrite + Unpin {
+    fn flush(&mut self) -> impl Future<Output = Result<()>> {
+        async {
+            Ok(AsyncWriteExt::flush(self).await?)
+        }
+    }
+
     fn write_slice(&mut self, slice: &[u8]) -> impl Future<Output = Result<()>> {
         async {
             Ok(AsyncWriteExt::write_all(self, slice).await?)

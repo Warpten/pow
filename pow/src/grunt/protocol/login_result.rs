@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
 use pow_macro::EnumKind;
-use pow_packets::{ReadExt, Serializable, WriteExt};
 
 use anyhow::Result;
 use crate::grunt::protocol::GruntProtocol;
-
+use crate::packets::{ReadExt, Serializable, WriteExt};
 
 #[derive(PartialEq, PartialOrd, EnumKind, Debug)]
 pub enum LoginResult {
@@ -27,13 +26,11 @@ pub enum LoginResult {
     LockedEnforced,
 }
 
-impl Serializable for LoginResult {
-    type Protocol = GruntProtocol;
-
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+impl<P: GruntProtocol> Serializable<P> for LoginResult {
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
-        assert!(matches!(protocol.version, 2..=3 | 5..=8));
+        assert!(matches!(protocol.version(), 2..=3 | 5..=8));
 
         let value = source.read_u8().await?;
 
@@ -53,12 +50,12 @@ impl Serializable for LoginResult {
             0x0D => LoginResult::NoAccess,
             0x0E => LoginResult::SuccessSurvey,
             0x0F => LoginResult::ParentalControl,
-            0x10 if protocol.version == 8 => LoginResult::LockedEnforced,
+            0x10 if protocol.version() == 8 => LoginResult::LockedEnforced,
             _ => panic!("Unknown login result {}", value)
         })
     }
 
-    fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> impl Future<Output = Result<()>>
+    fn send<D>(&self, dest: &mut D, protocol: &mut P) -> impl Future<Output = Result<()>>
         where D: WriteExt
     {
         match self {
@@ -77,7 +74,7 @@ impl Serializable for LoginResult {
             LoginResult::NoAccess => dest.write_u8(0x0D),
             LoginResult::SuccessSurvey => dest.write_u8(0x0E),
             LoginResult::ParentalControl => dest.write_u8(0x0F),
-            LoginResult::LockedEnforced if protocol.version == 8 => dest.write_u8(0x10),
+            LoginResult::LockedEnforced if protocol.version() == 8 => dest.write_u8(0x10),
             _ => panic!("Unknown login result {:?}", self)
         }
     }

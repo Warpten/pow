@@ -17,7 +17,6 @@ tokio-util.workspace = true
 paste.workspace = true
 
 pow-macro = { path = "../pow-macro" }
-pow-packets = { path = "../pow-packets" }
 pow-net = { path = "../pow-net"}
 
 [dev-dependencies]

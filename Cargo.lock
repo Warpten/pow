@@ -1212,7 +1212,6 @@ dependencies = [
  "paste",
  "pow-macro",
  "pow-net",
- "pow-packets",
  "regex",
  "serde",
  "serde_json",
@@ -1244,15 +1243,6 @@ dependencies = [
  "futures",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "pow-packets"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "paste",
- "tokio",
 ]
 
 [[package]]

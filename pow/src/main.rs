@@ -8,8 +8,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*};
 
+use crate::grunt::protocol::{GruntProtocol, LogonChallengeRequest};
 use crate::{grunt::server::GruntServer, options::{Configuration, Pipe, Protocol}};
 
+mod packets;
 mod options;
 mod grunt;
 
@@ -116,11 +118,35 @@ fn main() -> anyhow::Result<()> {
         .block_on(main_impl(configuration))
 }
 
+struct SimpleGruntProtocol {
+    pub version: u8
+}
+
+impl GruntProtocol for SimpleGruntProtocol {
+    fn version(&self) -> u8 {
+        self.version
+    }
+
+    fn set_version(&mut self,version:u8) {
+        self.version = version;
+    }
+
+    fn handle_logon_challenge_request<D>(&mut self,msg:LogonChallengeRequest,dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()> >where D:crate::packets::WriteExt {
+        async {
+            todo!()
+        }
+    }
+}
+
+fn make_grunt_protocol() -> SimpleGruntProtocol {
+    SimpleGruntProtocol { version: 8 }
+}
+
 async fn create_pipe(pipe: Pipe) -> anyhow::Result<()> {
     let handler = match pipe.source {
         Protocol::Grunt { host } => {
             async {
-                GruntServer::new(host, CancellationToken::new())
+                GruntServer::new(host, CancellationToken::new(), make_grunt_protocol)
                     .run()
                     .await
             }

@@ -4,7 +4,8 @@ use std::{fmt::{Debug, Display}, net::Ipv4Addr};
 
 use anyhow::Result;
 use pow_macro::EnumKind;
-use pow_packets::{Payload, ReadExt, Serializable, WriteExt};
+use tracing::info;
+use crate::packets::{Payload, ReadExt, Serializable, WriteExt};
 
 use crate::grunt::protocol::{GruntIdentifier, GruntProtocol, LoginResult, SecurityChallenge};
 
@@ -64,18 +65,19 @@ impl Debug for Version {
     }
 }
 
-impl Payload for LogonChallengeRequest {
-    type Protocol = GruntProtocol;
+impl<P: GruntProtocol> Payload<P> for LogonChallengeRequest {
     type Identifier = GruntIdentifier;
 
     fn identifier(&self) -> GruntIdentifier {
         GruntIdentifier(0x00)
     }
 
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
-        protocol.version = source.read_u8().await?;
+        info!("Received LOGON_CHALLENGE");
+
+        protocol.set_version(source.read_u8().await?);
 
         let size: usize = source.read_u8().await?;
         let mut source = source.take(size);
@@ -115,10 +117,10 @@ impl Payload for LogonChallengeRequest {
         })
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(&self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
-        dest.write_u8(protocol.version).await?;
+        dest.write_u8(protocol.version()).await?;
 
         let size = 4 + 1 + 1 + 1 + 2 + 4 + 4 + 4 + 4 + 4 + 1 + self.account_name.len();
         dest.write_u8(size as u8).await?;
@@ -137,6 +139,8 @@ impl Payload for LogonChallengeRequest {
         dest.write_u8(self.account_name.len() as u8).await?;
         dest.write_slice(self.account_name.as_bytes()).await?;
 
+        info!("Sent LOGON_CHALLENGE");
+
         Ok(())
     }
 }
@@ -154,15 +158,14 @@ pub enum LogonChallengeResponse {
     Err(LoginResult)
 }
 
-impl Payload for LogonChallengeResponse {
-    type Protocol = GruntProtocol;
+impl<P: GruntProtocol> Payload<P> for LogonChallengeResponse {
     type Identifier = GruntIdentifier;
     
     fn identifier(&self) -> Self::Identifier {
         GruntIdentifier(0x00)
     }
 
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
         let login_result = LoginResult::recv(source, protocol).await?;
@@ -196,7 +199,7 @@ impl Payload for LogonChallengeResponse {
         }
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(&self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
         dest.write_u8(0).await?; // Most emulators write a zero here.
