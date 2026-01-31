@@ -2,51 +2,52 @@ use heck::ToSnakeCase;
 use proc_macro_error::abort;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
-use syn::{DeriveInput, Expr, Ident, Path, Token, bracketed, parse::{Parse, ParseStream}, parse2};
+use syn::{DeriveInput, Expr, Generics, Ident, Path, Token, bracketed, parse::{Parse, ParseStream}, parse2};
 
 struct Protocol {
-    identifier: TypePath,
+    identifier: CompleteType,
     handlers: Vec<Handler>,
 }
 struct Handler {
-    ty: TypePath,
+    ty: CompleteType,
     id: Expr,
     span: Span,
 }
 
-enum TypePath {
-    Path(Path),
-    Ident(Ident),
+struct CompleteType {
+    pub path: Path,
+    pub generics: Generics,
 }
 
-impl Parse for TypePath {
+impl ToTokens for CompleteType {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.path.to_tokens(tokens);
+        self.generics.to_tokens(tokens);
+    }
+}
+
+impl Parse for CompleteType {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         // Try parsing a Path first.
         // This succeeds for:
         // - foo::bar::Baz
         // - Baz
         if let Ok(path) = input.parse::<Path>() {
-            return Ok(TypePath::Path(path));
+            let generics = input.parse::<Generics>().ok().unwrap_or_default();
+
+            return Ok(Self{ path, generics });
         }
         
         // If that fails, try parsing a bare Ident.
         if let Ok(ident) = input.parse::<Ident>() {
-            return Ok(TypePath::Ident(ident));
+            let generics = input.parse::<Generics>().ok().unwrap_or_default();
+
+            return Ok(Self{ path: ident.into(), generics });
         }
         
         Err(input.error("expected a type path or identifier"))
     }
 }
-
-impl TypePath {
-    fn into_path(self) -> Path {
-        match self {
-            TypePath::Path(p) => p,
-            TypePath::Ident(i) => Path::from(i),
-        }
-    }
-}
-
 
 syn::custom_keyword!(identifier);
 syn::custom_keyword!(handlers);
@@ -58,7 +59,7 @@ impl Parse for Protocol {
         // identifier = GruntIdentifier,
         input.parse::<identifier>()?;
         input.parse::<Token![=]>()?;
-        let identifier: TypePath = input.parse()?;
+        let identifier: CompleteType = input.parse()?;
         input.parse::<Token![,]>()?;
         
         // handlers = [ handler(...), handler(...), ... ]
@@ -76,19 +77,19 @@ impl Parse for Handler {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let span = input.span();
 
-        // handler(type = LogonChallengeRequest, identifier = ...)
+        // handler(type = ..., identifier = ...)
         input.parse::<handler>()?;
         let content;
         syn::parenthesized!(content in input);
 
-        // type = <Path>,
+        // type = <...>,
         content.parse::<ty>()?;
         content.parse::<Token![=]>()?;
-        let ty: TypePath = content.parse()?;
+        let ty: CompleteType = content.parse()?;
         
         content.parse::<Token![,]>()?;
         
-        // identifier = <Expr>
+        // identifier = <...>
         content.parse::<identifier>()?;
         content.parse::<Token![=]>()?;
         let id: Expr = content.parse()?;
@@ -100,28 +101,27 @@ impl Parse for Handler {
 pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
     let input: DeriveInput = parse2(input).expect("Failed to parse input");
 
-    let struct_ident = input.ident.clone();
-    let vis = input.vis.clone();
+    let struct_ident = CompleteType { path: input.ident.clone().into(), generics: input.generics.clone() };
+    let struct_generics = &struct_ident.generics;
 
     let protocol = match syn::parse2::<Protocol>(attr) {
         Ok(a) => a,
         Err(e) => return e.to_compile_error().into(),
     };
 
-    let identifier_ty = protocol.identifier.into_path();
-
-    let trait_ident = format_ident!("{}Implementation", input.ident);
+    let identifier = protocol.identifier;
+    let trait_ident = format_ident!("{}Implementation", struct_ident.path.get_ident().unwrap());
 
     let mut trait_methods = vec![];
     let mut match_arms = vec![];
 
     for handler in protocol.handlers {
         // Use the last segment of the path to obtain the function name
-        let ty = handler.ty.into_path();
+        let ty = handler.ty;
         let id = handler.id;
-        let type_ident = match ty.segments.last() {
+        let type_ident = match ty.path.segments.last() {
             Some(name) => name.ident.to_string(),
-            None => abort!(handler.span, "Unable to determine a type name from {}", ty.to_token_stream()),
+            None => abort!(handler.span, "Unable to determine a type name from {:?}", ty.path),
         };
 
         let method_ident = format_ident!("handle_{}", type_ident.to_snake_case());
@@ -139,7 +139,31 @@ pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
         });
     }
 
-    let assertion_ident = format_ident!("Assert{}", struct_ident);
+    let assertion = if struct_ident.generics == Default::default() {
+        let assertion_ident = format_ident!("Assert{}", struct_ident.path.get_ident().unwrap());
+        quote! {
+             // Emit the assertion trait.
+            trait #assertion_ident: #trait_ident {}
+            impl<T: #trait_ident> #assertion_ident for T {}
+
+            const _: fn() = || {
+                fn assert_impl<__Type: #assertion_ident>() {}
+                assert_impl::<#struct_ident>();
+            };
+        }
+    } else {
+        let assertion_ident = format_ident!("Assert{}", struct_ident.path.get_ident().unwrap());
+        quote! {
+             // Emit the assertion trait.
+            trait #assertion_ident: #trait_ident {}
+            impl<T: #trait_ident> #assertion_ident for T {}
+
+            const _: for #struct_generics fn() = || {
+                fn assert_impl<__Type: #assertion_ident>() {}
+                assert_impl::<#struct_ident>();
+            };
+        }
+    };
 
     quote! {
         // Re-paste the input
@@ -155,12 +179,12 @@ pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
         // Emit the Protocol implementation.
 
         #[doc = "This implementation of Protocol was automatically generated."]
-        impl ::pow_packets::Protocol for #struct_ident {
+        impl #struct_generics ::pow_packets::Protocol for #struct_ident {
             fn process_incoming<S, D>(&mut self, source: &mut S, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
                 where S : ::pow_packets::ReadExt, D: ::pow_packets::WriteExt
             {
                 async {
-                    let identifier = <#identifier_ty as ::pow_packets::Identifier>::recv(source, self).await?;
+                    let identifier = <#identifier as ::pow_packets::Identifier>::recv(source, self).await?;
 
                     match identifier {
                         #(#match_arms)*,
@@ -170,14 +194,7 @@ pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
             }
         }
 
-        // Emit the assertion trait.
-        trait #assertion_ident: #trait_ident {}
-        impl<T: #trait_ident> #assertion_ident for T {}
-
-        const _: fn() = || {
-            fn assert_impl<T: #assertion_ident>() {}
-            assert_impl::<#struct_ident>();
-        };
+        #assertion
     }.into()
 }
 
@@ -198,12 +215,12 @@ mod tests {
         };
 
         let input = quote! {
-            pub struct GruntProtocol(u8);
+            pub struct GruntProtocol<T>(u8, PhantomData<T>);
         };
 
         let output = derive_impl(attr, input);
         assert_tokens_eq!(output, quote!{
-            pub struct GruntProtocol(u8);
+            pub struct GruntProtocol<T>(u8, PhantomData<T>);
 
             #[doc = "This trait expects a complete implementation of every handler associated with a protocol."]
             trait GruntProtocolImplementation {
@@ -217,7 +234,7 @@ mod tests {
             }
             
             #[doc = "This implementation of Protocol was automatically generated."]
-            impl ::pow_packets::Protocol for GruntProtocol {
+            impl<T> ::pow_packets::Protocol for GruntProtocol<T> {
                 fn process_incoming<S, D>(&mut self, source: &mut S, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
                     where S: ::pow_packets::ReadExt, D: ::pow_packets::WriteExt
                 {
@@ -241,9 +258,9 @@ mod tests {
             trait AssertGruntProtocol: GruntProtocolImplementation {}
             impl<T: GruntProtocolImplementation> AssertGruntProtocol for T {}
             
-            const _: fn() = || {
-                fn assert_impl<T: AssertGruntProtocol>() {}
-                assert_impl::<GruntProtocol>();
+            const _: for<T> fn() = || {
+                fn assert_impl<__Type: AssertGruntProtocol>() {}
+                assert_impl::<GruntProtocol<T>>();
             };
         });
     }
