@@ -19,6 +19,19 @@ pub fn derive_enum_kind(input: TokenStream) -> TokenStream {
     TokenStream::from(result)
 }
 
+/// Implements the [`Protocol`] trait for this type and generates
+/// a trait with a function for each packet type declared in the handlers.
+/// 
+/// Example usage:
+/// 
+/// ```rust
+/// use crate::grunt::protocol::{self};
+/// 
+/// #[protocol(identifier = GruntIdentifier, handlers = [
+///     handler(ty = LogonChallengeRequest, identifier = GruntIdentifier(0x00)),
+///     handler(ty = LogonProofRequest, identifier = GruntIdentifier(0x01))
+/// ])]
+/// ```
 #[proc_macro_attribute]
 #[proc_macro_error]
 pub fn protocol(attr: TokenStream, input: TokenStream) -> TokenStream {

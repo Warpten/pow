@@ -16,9 +16,11 @@ use anyhow::Result;
 use pow_packets::{Identifier, Payload, Protocol, ReadExt, Serializable, WriteExt};
 use pow_macro::protocol;
 
-#[protocol(identifier = crate::grunt::protocol::GruntIdentifier, handlers = [
-    handler(ty = crate::grunt::protocol::LogonChallengeRequest, identifier = crate::grunt::protocol::GruntIdentifier(0x00)),
-    handler(ty = crate::grunt::protocol::LogonProofRequest, identifier = crate::grunt::protocol::GruntIdentifier(0x01))
+use crate::grunt::protocol::{self};
+
+#[protocol(identifier = GruntIdentifier, handlers = [
+    handler(ty = LogonChallengeRequest, identifier = GruntIdentifier(0x00)),
+    handler(ty = LogonProofRequest, identifier = GruntIdentifier(0x01))
 ])]
 pub struct GruntProtocol {
     pub version: u8,
