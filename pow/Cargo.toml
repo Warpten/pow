@@ -15,10 +15,10 @@ console-subscriber = "0.5.0"
 anyhow.workspace = true
 tokio-util.workspace = true
 paste.workspace = true
+futures.workspace = true
+async-stream.workspace = true
 
 pow-macro = { path = "../pow-macro" }
-pow-packets = { path = "../pow-packets" }
-pow-net = { path = "../pow-net"}
 
 [dev-dependencies]
 regex = { version = "1", features = ["unicode-case"] }

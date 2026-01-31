@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use pow_macro::EnumKind;
-use pow_packets::{ReadExt, Serializable, WriteExt};
 
 use anyhow::Result;
+use crate::packets::{ReadExt, Serializable, WriteExt};
 use crate::grunt::protocol::GruntProtocol;
 
 #[derive(PartialEq, EnumKind, Debug)]
@@ -14,13 +14,11 @@ pub enum SecurityChallenge {
     Authenticator(u8)
 }
 
-impl Serializable for SecurityChallenge {
-    type Protocol = GruntProtocol;
-
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+impl<P: GruntProtocol> Serializable<P> for SecurityChallenge {
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
-        if protocol.version != 2 {
+        if protocol.version() != 2 {
             let kind = source.read_u8().await?;
             Ok(match kind {
                 0 => Self::None,
@@ -49,10 +47,10 @@ impl Serializable for SecurityChallenge {
         }
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
-        if protocol.version == 2 {
+        if protocol.version() == 2 {
             return Ok(());
         }
 
@@ -62,18 +60,18 @@ impl Serializable for SecurityChallenge {
         Ok(match self {
             SecurityChallenge::None => (),
             SecurityChallenge::Pin { seed, salt } => {
-                dest.write_u32_le(*seed).await?;
-                dest.write_slice(salt).await?;
+                dest.write_u32_le(seed).await?;
+                dest.write_slice(&salt).await?;
             },
             SecurityChallenge::Matrix { width, height, digits, challenges, seed } => {
-                dest.write_u8(*width).await?;
-                dest.write_u8(*height).await?;
-                dest.write_u8(*digits).await?;
-                dest.write_u8(*challenges).await?;
-                dest.write_u64_le(*seed).await?;
+                dest.write_u8(width).await?;
+                dest.write_u8(height).await?;
+                dest.write_u8(digits).await?;
+                dest.write_u8(challenges).await?;
+                dest.write_u64_le(seed).await?;
             },
             SecurityChallenge::Authenticator(value) => {
-                dest.write_u8(*value).await?;
+                dest.write_u8(value).await?;
             },
         })
     }
@@ -87,13 +85,11 @@ pub enum SecurityProof {
     Authenticator(String)
 }
 
-impl Serializable for SecurityProof {
-    type Protocol = GruntProtocol;
-
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+impl<P: GruntProtocol> Serializable<P> for SecurityProof {
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
-        if protocol.version != 2 {
+        if protocol.version() != 2 {
             let kind = source.read_u8().await?;
             Ok(match kind {
                 0 => Self::None,
@@ -120,11 +116,11 @@ impl Serializable for SecurityProof {
         }
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
-        if protocol.version == 2 {
-            assert!(*self == Self::None);
+        if protocol.version() == 2 {
+            assert!(self == Self::None);
             return Ok(());
         }
 
@@ -134,11 +130,11 @@ impl Serializable for SecurityProof {
         Ok(match self {
             SecurityProof::None => (),
             SecurityProof::Pin { salt, hash } => {
-                dest.write_slice(salt).await?;
-                dest.write_slice(hash).await?;
+                dest.write_slice(&salt).await?;
+                dest.write_slice(&hash).await?;
             },
             SecurityProof::Matrix { proof } => {
-                dest.write_slice(proof).await?;
+                dest.write_slice(&proof).await?;
             },
             SecurityProof::Authenticator(str) => {
                 dest.write_u8(str.len() as u8).await?;
