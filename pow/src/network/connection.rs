@@ -6,19 +6,19 @@ use tokio_util::sync::CancellationToken;
 use crate::network::RemotePeer;
 use crate::{grunt::protocol::GruntProtocol, packets::{Payload, Protocol}};
 
-/// A [`GruntClient`] is a client able to communicate with a [`GruntServer`].
+/// A [`Client`] is a client able to communicate with a [`Server`].
 /// It is both:
-/// - a [`RemotePeer`] because it can be managed by a [`GruntServer`] to model a remote.
-/// - a [`LocalPeer`] because it can be created manually to connect to a [`GruntServer`].
-pub struct GruntClient<P: > {
-    pub(super) addr: SocketAddr,
-    pub(super) token: CancellationToken,
-    pub(super) sender: BufWriter<OwnedWriteHalf>,
-    pub(super) reader: BufReader<OwnedReadHalf>,
-    pub(super) protocol: P,
+/// - a [`RemotePeer`] because it can be managed by a [`Server`] to model a remote.
+/// - a [`LocalPeer`] because it can be created manually to connect to a [`Server`].
+pub struct Client<P> {
+    pub(crate) addr: SocketAddr,
+    pub(crate) token: CancellationToken,
+    pub(crate) sender: BufWriter<OwnedWriteHalf>,
+    pub(crate) reader: BufReader<OwnedReadHalf>,
+    pub(crate) protocol: P,
 }
 
-impl<P: GruntProtocol + Protocol> GruntClient<P> {
+impl<P: GruntProtocol + Protocol> Client<P> {
     /// Connects to the provided server and uses the given protocol version.
     ///
     /// # Arguments
@@ -59,7 +59,7 @@ impl<P: GruntProtocol + Protocol> GruntClient<P> {
     }
 }
 
-impl<P: Protocol> RemotePeer for GruntClient<P> {
+impl<P: Protocol> RemotePeer for Client<P> {
     fn update(&mut self) -> impl Future<Output = Result<()>>  {
         async move {
             loop {
@@ -74,7 +74,7 @@ impl<P: Protocol> RemotePeer for GruntClient<P> {
     }
 }
 
-impl<P> LocalPeer for GruntClient<P> {
+impl<P> LocalPeer for Client<P> {
     fn disconnect(&mut self) -> impl Future<Output = Result<()>> {
         async {
             self.token.cancel();

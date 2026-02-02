@@ -6,12 +6,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::network::{Acceptor, RemotePeer, Service};
-use crate::grunt::connection::GruntClient;
+use crate::network::connection::Client;
 use crate::grunt::protocol::GruntProtocol;
 
-/// A specialized trait for Grunt.
+/// A specialised trait for a server.
 /// Types that implement this trait automatically implement [`Service`] and [`Acceptor`].
-pub trait GruntServer {
+pub trait Server {
     /// The protocol associated with this server.
     type Protocol: GruntProtocol;
 
@@ -22,13 +22,14 @@ pub trait GruntServer {
     fn token(&self) -> &CancellationToken;
 
     /// Creates a new protocol. This function is used by the implementation of
-    /// [`Acceptor`] to create a new [`GruntClient`].
+    /// [`Acceptor`] to create a new [`Client`].
     fn make_protocol(&self) -> Self::Protocol;
 }
 
-/// Blanket implementation of [`Acceptor`] for all [`GruntServer`]s.
-impl<T> Acceptor for T where T: GruntServer {
-    type Peer = GruntClient<T::Protocol>;
+/// Blanket implementation of [`Acceptor`] for all [`Server`]s.
+impl<T> Acceptor for T where T: Server
+{
+    type Peer = Client<T::Protocol>;
     type Listener = TcpListener;
 
     fn bind(&self) -> impl Future<Output = Result<Self::Listener>> {
@@ -42,7 +43,7 @@ impl<T> Acceptor for T where T: GruntServer {
             let (stream, addr) = listener.accept().await?;
             let (tx, rx) = stream.into_split();
 
-            Ok(GruntClient {
+            Ok(Client {
                 addr,
                 token: self.token().child_token(),
                 sender: BufWriter::new(rx),
@@ -53,14 +54,14 @@ impl<T> Acceptor for T where T: GruntServer {
     }
 }
 
-/// Blanket implementation of [`Service`] for all [`GruntServer`]s.
-impl<T> Service for T where T: GruntServer, T::Protocol: Send {
-    type Connection = GruntClient<T::Protocol>;
+/// Blanket implementation of [`Service`] for all [`Server`]s.
+impl<T> Service for T where T: Server, T::Protocol: Send {
+    type Connection = Client<T::Protocol>;
     type Listener = TcpListener;
 
     /// Returns a cancellation token that controls the lifetime of this Grunt server.
     fn token(&self) -> &CancellationToken {
-        GruntServer::token(self)
+        Server::token(self)
     }
 
     /// Runs this Grunt service and returns a future that resolves when the service is stopped.
@@ -74,8 +75,6 @@ impl<T> Service for T where T: GruntServer, T::Protocol: Send {
     /// Runs this Grunt service and returns a future that resolves when the service is stopped.
     fn listen(&self, listener: Self::Listener) -> impl Future<Output = Result<()>> {
         async move {
-            info!("Grunt server listening on {}", self.addr());
-
             let (tx, mut rx) = mpsc::channel::<Self::Connection>(32);
 
             let listen_token = self.token().child_token();
@@ -112,7 +111,6 @@ impl<T> Service for T where T: GruntServer, T::Protocol: Send {
                 }
             }
 
-            info!("Grunt server shutting down...");
             Ok(())
         }
     }

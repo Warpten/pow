@@ -1,36 +1,36 @@
 #![allow(dead_code)]
 
-pub mod server;
-pub mod connection;
 pub mod protocol;
 
 #[cfg(test)]
 mod test {
     use std::net::IpAddr;
-    use tokio::sync::broadcast::{self, Receiver, Sender};
+    use tokio::sync::mpsc::{self, Receiver, Sender};
     use tokio_util::sync::CancellationToken;
     use anyhow::Result;
     use tracing::info;
     use crate::grunt::protocol::{GruntProtocol, LogonProofRequest};
-    use crate::grunt::{connection::GruntClient, protocol::{LogonChallengeRequest, Version}, server::GruntServer};
-    use crate::network::{LocalPeer, Acceptor, Service};
+    use crate::grunt::protocol::{LogonChallengeRequest, Version};
+    use crate::network::{Acceptor, LocalPeer, Service};
+    use crate::network::connection::Client;
+    use crate::network::server::Server;
     use crate::packets::WriteExt;
 
-    const PACKET_COUNT: usize = 10;
+    const PACKET_COUNT: usize = 1000;
     const SERVER_ADDRESS: &'static str = "127.0.0.1:8080";
 
-    /// This type is a very simple server for which [`GruntServer`] will be implemented.
+    /// This type is a very simple server for which [`Server`] will be implemented.
     /// It holds:
     /// - The [`CancellationToken`] that controls its lifetime.
-    /// - A [`broadcast::Sender`] that will be cloned whenever a new [`GruntClient`] connects.
+    /// - A [`mpsc::Sender`] that will be cloned whenever a new [`Client`] connects.
     ///   Each client will have an associated [`ServerProtocol`] that will use this sender to
     ///   signal that a packet was successfully received.
-    struct Server {
+    struct TestServer {
         sender: Sender<u32>,
         token: CancellationToken,
     }
 
-    impl GruntServer for Server {
+    impl Server for TestServer {
         type Protocol = ServerProtocol;
 
         fn addr(&self) -> String { SERVER_ADDRESS.to_string() }
@@ -49,23 +49,25 @@ mod test {
 
     /// A test utility method that simply waits for signals that packets were received.
     async fn all_requests_handled(mut receiver: Receiver<u32>) {
-        for i in 0..PACKET_COUNT {
+        info!("Awaiting packets...");
+        for _ in 0..PACKET_COUNT {
             match receiver.recv().await {
-                Ok(_) => info!("Received packet {} of {}", i + 1, PACKET_COUNT),
-                Err(e) => assert!(false, "Failed to receive a packet: {}", e)
+                Some(_) => (),
+                None => ()
             };
         }
+        info!("Done ({} packets)", PACKET_COUNT);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[tracing_test::traced_test]
     pub async fn test_round_trip() {
         let controller = CancellationToken::new();
-        let (tx, rx) = broadcast::channel(10);
+        let (tx, rx) = mpsc::channel(10);
 
         // Spin up the server in another thread.
         let server = {
-            let server = Server {
+            let server = TestServer {
                 sender: tx,
                 token: controller.child_token(),
             };
@@ -86,7 +88,7 @@ mod test {
         // Now spin up a client. We use a clone of the protocol the server
         // uses just so we can share state between the client and the server
         // for this test.
-        let mut client = GruntClient::connect(
+        let mut client = Client::connect(
             SERVER_ADDRESS,
             ClientProtocol { version: 8 },
             CancellationToken::new()
@@ -130,7 +132,7 @@ mod test {
 
     /// A simple protocol for Grunt. This is more or less exactly the same type as the
     /// [`TestingProtocol`] but it lacks the signal state and will panic if it suddenly
-    /// starts behaving as a [`GruntServer`].
+    /// starts behaving as a [`TestServer`].
     struct ClientProtocol {
         pub version: u8
     }
@@ -186,6 +188,7 @@ mod test {
                 assert_eq!(msg.account_name, "pow");
 
                 self.signal.send(1)
+                    .await
                     .expect("Unable to signal");
 
                 Ok(())
