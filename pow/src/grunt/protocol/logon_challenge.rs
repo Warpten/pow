@@ -141,7 +141,7 @@ impl<P: GruntProtocol> Payload<P> for LogonChallengeRequest {
     }
 }
 
-#[derive(EnumKind, Debug)]
+#[derive(Debug)]
 pub enum LogonChallengeResponse {
     Ok {
         public_key: [u8; 32],
