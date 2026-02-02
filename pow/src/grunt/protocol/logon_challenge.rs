@@ -4,7 +4,8 @@ use std::{fmt::{Debug, Display}, net::Ipv4Addr};
 
 use anyhow::Result;
 use pow_macro::EnumKind;
-use pow_packets::{Payload, ReadExt, Serializable, WriteExt};
+use tracing::info;
+use crate::packets::{Payload, ReadExt, Serializable, WriteExt};
 
 use crate::grunt::protocol::{GruntIdentifier, GruntProtocol, LoginResult, SecurityChallenge};
 
@@ -64,24 +65,23 @@ impl Debug for Version {
     }
 }
 
-impl Payload for LogonChallengeRequest {
-    type Protocol = GruntProtocol;
+impl<P: GruntProtocol> Payload<P> for LogonChallengeRequest {
     type Identifier = GruntIdentifier;
 
     fn identifier(&self) -> GruntIdentifier {
         GruntIdentifier(0x00)
     }
 
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
-        protocol.version = source.read_u8().await?;
+        protocol.set_version(source.read_u8().await?);
 
         let size: usize = source.read_u8().await?;
         let mut source = source.take(size);
 
         let game = source.read_u32_le().await?;
-        
+
         let version: [u8; 3] = source.read_exact_slice().await?;
         let build = source.read_u16_le().await?;
 
@@ -90,7 +90,7 @@ impl Payload for LogonChallengeRequest {
         let locale = source.read_u32_le().await?;
         let timezone = source.read_i32_le().await?;
         let address = source.read_u32_be::<Ipv4Addr>().await?;
-        
+
         let account_name = {
             let length = source.read_u8::<usize>().await?.into();
             source.read_string(length).await?
@@ -100,7 +100,7 @@ impl Payload for LogonChallengeRequest {
 
         Ok(Self {
             game,
-            version : Version {
+            version: Version {
                 major: version[0],
                 minor: version[1],
                 patch: version[2],
@@ -115,10 +115,10 @@ impl Payload for LogonChallengeRequest {
         })
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
-        dest.write_u8(protocol.version).await?;
+        dest.write_u8(protocol.version()).await?;
 
         let size = 4 + 1 + 1 + 1 + 2 + 4 + 4 + 4 + 4 + 4 + 1 + self.account_name.len();
         dest.write_u8(size as u8).await?;
@@ -141,7 +141,7 @@ impl Payload for LogonChallengeRequest {
     }
 }
 
-#[derive(EnumKind, Debug)]
+#[derive(Debug)]
 pub enum LogonChallengeResponse {
     Ok {
         public_key: [u8; 32],
@@ -154,15 +154,14 @@ pub enum LogonChallengeResponse {
     Err(LoginResult)
 }
 
-impl Payload for LogonChallengeResponse {
-    type Protocol = GruntProtocol;
+impl<P: GruntProtocol> Payload<P> for LogonChallengeResponse {
     type Identifier = GruntIdentifier;
     
     fn identifier(&self) -> Self::Identifier {
         GruntIdentifier(0x00)
     }
 
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
         let login_result = LoginResult::recv(source, protocol).await?;
@@ -196,7 +195,7 @@ impl Payload for LogonChallengeResponse {
         }
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
         dest.write_u8(0).await?; // Most emulators write a zero here.
@@ -204,7 +203,7 @@ impl Payload for LogonChallengeResponse {
         match self {
             LogonChallengeResponse::Ok { public_key, generator, large_safe_prime, salt, crc, security } => {
                 dest.write_u8(0).await?; // LoginResult::Success
-                dest.write_slice(public_key).await?;
+                dest.write_slice(&public_key).await?;
                 
                 dest.write_u8(generator.len() as u8).await?;
                 dest.write_slice(&generator).await?;
@@ -212,8 +211,8 @@ impl Payload for LogonChallengeResponse {
                 dest.write_u8(large_safe_prime.len() as u8).await?;
                 dest.write_slice(&large_safe_prime).await?;
 
-                dest.write_slice(salt).await?;
-                dest.write_slice(crc).await?;
+                dest.write_slice(&salt).await?;
+                dest.write_slice(&crc).await?;
                 
                 security.send(dest, protocol).await
             },

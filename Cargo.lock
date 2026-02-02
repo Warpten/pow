@@ -1206,13 +1206,13 @@ name = "pow"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "built",
  "clap",
  "console-subscriber",
+ "futures",
  "paste",
  "pow-macro",
- "pow-net",
- "pow-packets",
  "regex",
  "serde",
  "serde_json",
@@ -1233,26 +1233,6 @@ dependencies = [
  "proc-macro2 1.0.104",
  "quote 1.0.42",
  "syn 2.0.111",
-]
-
-[[package]]
-name = "pow-net"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "futures",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "pow-packets"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "paste",
- "tokio",
 ]
 
 [[package]]

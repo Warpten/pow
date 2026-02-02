@@ -1,5 +1,4 @@
 use proc_macro::TokenStream;
-use proc_macro_error::proc_macro_error;
 
 mod enum_from;
 mod enum_kind;
@@ -34,7 +33,6 @@ pub fn derive_enum_kind(input: TokenStream) -> TokenStream {
 /// ])]
 /// ```
 #[proc_macro_attribute]
-#[proc_macro_error]
 pub fn protocol(attr: TokenStream, input: TokenStream) -> TokenStream {
     let result = protocol::derive_impl(attr.into(), input.into());
 

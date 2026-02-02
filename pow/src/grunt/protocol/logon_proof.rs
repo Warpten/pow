@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
-use pow_packets::{Payload, ReadExt, Serializable, WriteExt};
-
 use anyhow::Result;
+use crate::packets::{Payload, ReadExt, Serializable, WriteExt};
 use crate::grunt::protocol::{GruntIdentifier, GruntProtocol, SecurityProof};
 
 #[derive(Debug)]
@@ -13,10 +12,8 @@ pub struct TelemetryKey {
     pub proof: [u8; 20],
 }
 
-impl Serializable for TelemetryKey {
-    type Protocol = GruntProtocol;
-
-    async fn recv<S>(source: &mut S, _: &mut Self::Protocol) -> Result<Self>
+impl<P: GruntProtocol> Serializable<P> for TelemetryKey {
+    async fn recv<S>(source: &mut S, _: &mut P) -> Result<Self>
         where S: ReadExt
     {
         let unk1 = source.read_u16_le().await?;
@@ -27,7 +24,7 @@ impl Serializable for TelemetryKey {
         Ok(Self { unk1, unk2, unk3, proof })
     }
     
-    async fn send<D>(&self, dest: &mut D, _: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(self, dest: &mut D, _: &mut P) -> Result<()>
         where D: WriteExt
     {
         dest.write_u16_le(self.unk1).await?;
@@ -46,15 +43,14 @@ pub struct LogonProofRequest {
     pub security: SecurityProof,
 }
 
-impl Payload for LogonProofRequest {
-    type Protocol = GruntProtocol;
+impl<P: GruntProtocol> Payload<P> for LogonProofRequest {
     type Identifier = GruntIdentifier;
 
     fn identifier(&self) -> Self::Identifier {
         GruntIdentifier(0x01)
     }
 
-    async fn recv<S>(source: &mut S, protocol: &mut Self::Protocol) -> Result<Self>
+    async fn recv<S>(source: &mut S, protocol: &mut P) -> Result<Self>
         where S: ReadExt
     {
         let public_key = source.read_exact_slice().await?;
@@ -81,14 +77,14 @@ impl Payload for LogonProofRequest {
         })
     }
 
-    async fn send<D>(&self, dest: &mut D, protocol: &mut Self::Protocol) -> Result<()>
+    async fn send<D>(self, dest: &mut D, protocol: &mut P) -> Result<()>
         where D: WriteExt
     {
         dest.write_slice(&self.public_key).await?;
         dest.write_slice(&self.proof).await?;
         dest.write_slice(&self.crc).await?;
         dest.write_u8(self.telemetry_keys.len() as u8).await?;
-        for telemetry_key in &self.telemetry_keys {
+        for telemetry_key in self.telemetry_keys {
             telemetry_key.send(dest, protocol).await?;
         }
 

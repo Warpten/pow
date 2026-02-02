@@ -1,52 +1,16 @@
 use heck::ToSnakeCase;
-use proc_macro_error::abort;
-use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, format_ident, quote};
-use syn::{DeriveInput, Expr, Ident, Path, Token, bracketed, parse::{Parse, ParseStream}, parse2};
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+use syn::{Expr, Ident, ItemTrait, Token, TraitItem, TraitItemFn, bracketed, parse::{Parse, ParseStream}, parse2};
 
 struct Protocol {
-    identifier: TypePath,
+    identifier: Ident,
     handlers: Vec<Handler>,
 }
 struct Handler {
-    ty: TypePath,
+    ty: Ident,
     id: Expr,
-    span: Span,
 }
-
-enum TypePath {
-    Path(Path),
-    Ident(Ident),
-}
-
-impl Parse for TypePath {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        // Try parsing a Path first.
-        // This succeeds for:
-        // - foo::bar::Baz
-        // - Baz
-        if let Ok(path) = input.parse::<Path>() {
-            return Ok(TypePath::Path(path));
-        }
-        
-        // If that fails, try parsing a bare Ident.
-        if let Ok(ident) = input.parse::<Ident>() {
-            return Ok(TypePath::Ident(ident));
-        }
-        
-        Err(input.error("expected a type path or identifier"))
-    }
-}
-
-impl TypePath {
-    fn into_path(self) -> Path {
-        match self {
-            TypePath::Path(p) => p,
-            TypePath::Ident(i) => Path::from(i),
-        }
-    }
-}
-
 
 syn::custom_keyword!(identifier);
 syn::custom_keyword!(handlers);
@@ -58,7 +22,7 @@ impl Parse for Protocol {
         // identifier = GruntIdentifier,
         input.parse::<identifier>()?;
         input.parse::<Token![=]>()?;
-        let identifier: TypePath = input.parse()?;
+        let identifier: Ident = input.parse()?;
         input.parse::<Token![,]>()?;
         
         // handlers = [ handler(...), handler(...), ... ]
@@ -74,93 +38,77 @@ impl Parse for Protocol {
 
 impl Parse for Handler {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let span = input.span();
-
-        // handler(type = LogonChallengeRequest, identifier = ...)
+        // handler(type = ..., identifier = ...)
         input.parse::<handler>()?;
         let content;
         syn::parenthesized!(content in input);
 
-        // type = <Path>,
+        // type = <...>,
         content.parse::<ty>()?;
         content.parse::<Token![=]>()?;
-        let ty: TypePath = content.parse()?;
+        let ty: Ident = content.parse()?;
         
         content.parse::<Token![,]>()?;
         
-        // identifier = <Expr>
+        // identifier = <...>
         content.parse::<identifier>()?;
         content.parse::<Token![=]>()?;
         let id: Expr = content.parse()?;
 
-        Ok(Handler { ty, id, span })
+        Ok(Handler { ty, id })
     }
 }
 
 pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
-    let input: DeriveInput = parse2(input).expect("Failed to parse input");
-
-    let struct_ident = input.ident.clone();
-    let vis = input.vis.clone();
+    let mut input: ItemTrait = syn::parse2(input).expect("[protocol(...)] can only be applied to traits.");
 
     let protocol = match syn::parse2::<Protocol>(attr) {
         Ok(a) => a,
         Err(e) => return e.to_compile_error().into(),
     };
 
-    let identifier_ty = protocol.identifier.into_path();
-
-    let trait_ident = format_ident!("{}Implementation", input.ident);
-
-    let mut trait_methods = vec![];
     let mut match_arms = vec![];
 
     for handler in protocol.handlers {
-        // Use the last segment of the path to obtain the function name
-        let ty = handler.ty.into_path();
-        let id = handler.id;
-        let type_ident = match ty.segments.last() {
-            Some(name) => name.ident.to_string(),
-            None => abort!(handler.span, "Unable to determine a type name from {}", ty.to_token_stream()),
+        let ty = handler.ty; // The packet type.
+        let id = handler.id; // The packet identifier.
+
+        let handler_ident = format_ident!("handle_{}", ty.to_string().to_snake_case());
+
+        let handler: TraitItemFn = {
+            let quoted = quote! {
+                fn #handler_ident<D>(&mut self, msg: #ty, dest: &mut D)
+                    -> impl ::core::future::Future<Output = anyhow::Result<()>> + Send
+                        where D: crate::packets::WriteExt;
+            };
+
+            parse2(quoted).expect("Failed to parse method handler.")
         };
 
-        let method_ident = format_ident!("handle_{}", type_ident.to_snake_case());
-
-        trait_methods.push(quote! {
-            fn #method_ident<D>(&mut self, msg: #ty, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
-                where D: ::pow_packets::WriteExt;
-        });
+        input.items.push(TraitItem::Fn(handler));
 
         match_arms.push(quote! {
             #id => {
-                let msg = <#ty as ::pow_packets::Payload>::recv(source, self).await?;
-                <Self as #trait_ident>::#method_ident(self, msg, dest).await
+                let msg = <#ty as crate::packets::Payload<T>>::recv(source, self).await?;
+                Self::#handler_ident(self, msg, dest).await
             }
-        });
+        })
     }
 
-    let assertion_ident = format_ident!("Assert{}", struct_ident);
+    let trait_ident = &input.ident;
+    let identifier_ty = &protocol.identifier;
 
     quote! {
-        // Re-paste the input
         #input
 
-        // Emit the trait itself.
-
-        #[doc = "This trait expects a complete implementation of every handler associated with a protocol."]
-        trait #trait_ident {
-            #(#trait_methods)*
-        }
-
-        // Emit the Protocol implementation.
-
-        #[doc = "This implementation of Protocol was automatically generated."]
-        impl ::pow_packets::Protocol for #struct_ident {
-            fn process_incoming<S, D>(&mut self, source: &mut S, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
-                where S : ::pow_packets::ReadExt, D: ::pow_packets::WriteExt
+        // Emit the blanket implementation
+        impl<T> Protocol for T where T: #trait_ident {
+            fn process_incoming<Source, Dest>(&mut self, source: &mut Source, dest: &mut Dest)
+                -> impl ::core::future::Future<Output = anyhow::Result<()>> + Send
+                    where Source: crate::packets::ReadExt, Dest: crate::packets::WriteExt
             {
-                async {
-                    let identifier = <#identifier_ty as ::pow_packets::Identifier>::recv(source, self).await?;
+                async move {
+                    let identifier = <#identifier_ty as crate::packets::Identifier<T>>::recv(source, self).await?;
 
                     match identifier {
                         #(#match_arms)*,
@@ -169,15 +117,6 @@ pub fn derive_impl(attr: TokenStream, input: TokenStream) -> TokenStream {
                 }
             }
         }
-
-        // Emit the assertion trait.
-        trait #assertion_ident: #trait_ident {}
-        impl<T: #trait_ident> #assertion_ident for T {}
-
-        const _: fn() = || {
-            fn assert_impl<T: #assertion_ident>() {}
-            assert_impl::<#struct_ident>();
-        };
     }.into()
 }
 
@@ -198,53 +137,42 @@ mod tests {
         };
 
         let input = quote! {
-            pub struct GruntProtocol(u8);
+            pub trait GruntProtocol { }
         };
 
         let output = derive_impl(attr, input);
         assert_tokens_eq!(output, quote!{
-            pub struct GruntProtocol(u8);
-
-            #[doc = "This trait expects a complete implementation of every handler associated with a protocol."]
-            trait GruntProtocolImplementation {
+            pub trait GruntProtocol {
                 fn handle_logon_challenge_request<D>(&mut self, msg: LogonChallengeRequest, dest: &mut D)
-                    -> impl ::core::future::Future<Output = anyhow::Result<()>>
-                        where D: ::pow_packets::WriteExt;
+                    -> impl ::core::future::Future<Output = anyhow::Result<()>> + Send
+                        where D: crate::packets::WriteExt;
 
                 fn handle_logon_proof_request<D>(&mut self, msg: LogonProofRequest, dest: &mut D)
-                    -> impl ::core::future::Future<Output = anyhow::Result<()>>
-                        where D: ::pow_packets::WriteExt;
+                    -> impl ::core::future::Future<Output = anyhow::Result<()>> + Send
+                        where D: crate::packets::WriteExt;
             }
-            
-            #[doc = "This implementation of Protocol was automatically generated."]
-            impl ::pow_packets::Protocol for GruntProtocol {
-                fn process_incoming<S, D>(&mut self, source: &mut S, dest: &mut D) -> impl ::core::future::Future<Output = anyhow::Result<()>>
-                    where S: ::pow_packets::ReadExt, D: ::pow_packets::WriteExt
+
+            impl<T> Protocol for T where T: GruntProtocol {
+                fn process_incoming<Source, Dest>(&mut self, source: &mut Source, dest: &mut Dest)
+                    -> impl ::core::future::Future<Output = anyhow::Result<()>> + Send
+                        where Source: crate::packets::ReadExt, Dest: crate::packets::WriteExt,
                 {
-                    async {
-                        let identifier = <GruntIdentifier as ::pow_packets::Identifier>::recv(source, self).await?;
+                    async move {
+                        let identifier = <GruntIdentifier as crate::packets::Identifier<T>>::recv(source, self).await?;
                         match identifier {
                             0x00 => {
-                                let msg = <LogonChallengeRequest as ::pow_packets::Payload>::recv(source, self).await?;
-                                <Self as GruntProtocolImplementation>::handle_logon_challenge_request(self, msg, dest).await
+                                let msg = <LogonChallengeRequest as crate::packets::Payload<T>>::recv(source, self).await?;
+                                Self::handle_logon_challenge_request(self, msg, dest).await
                             }
                             0x01 => {
-                                let msg = <LogonProofRequest as ::pow_packets::Payload>::recv(source, self).await?;
-                                <Self as GruntProtocolImplementation>::handle_logon_proof_request(self, msg, dest).await
+                                let msg = <LogonProofRequest as crate::packets::Payload<T>>::recv(source, self).await?;
+                                Self::handle_logon_proof_request(self, msg, dest).await
                             }
                             _ => Err(::anyhow::anyhow!("Unknown identifier")),
                         }
                     }
                 }
             }
-            
-            trait AssertGruntProtocol: GruntProtocolImplementation {}
-            impl<T: GruntProtocolImplementation> AssertGruntProtocol for T {}
-            
-            const _: fn() = || {
-                fn assert_impl<T: AssertGruntProtocol>() {}
-                assert_impl::<GruntProtocol>();
-            };
         });
     }
 }

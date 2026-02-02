@@ -1,17 +1,17 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
-
+use anyhow::Result;
 use clap::Parser;
 use console_subscriber::ConsoleLayer;
-use pow_net::Service;
 use tokio::{runtime::Builder, task::JoinSet};
-use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*};
 
-use crate::{grunt::server::GruntServer, options::{Configuration, Pipe, Protocol}};
+use crate::{options::{Configuration, Pipe, Protocol}};
 
+mod packets;
 mod options;
 mod grunt;
+mod network;
 
 // Use of a mod or pub mod is not actually necessary.
 pub mod built_info {
@@ -76,7 +76,7 @@ fn rev_hash() -> String {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     let logger = fmt::layer()
         .with_target(false)
         .with_timer(fmt::time::uptime())
@@ -116,17 +116,13 @@ fn main() -> anyhow::Result<()> {
         .block_on(main_impl(configuration))
 }
 
-async fn create_pipe(pipe: Pipe) -> anyhow::Result<()> {
+async fn create_pipe(pipe: Pipe) -> Result<()> {
     let handler = match pipe.source {
         Protocol::Grunt { host } => {
-            async {
-                GruntServer::new(host, CancellationToken::new())
-                    .run()
-                    .await
-            }
+            unimplemented!("Rewrite in progress")
         },
         Protocol::BattleNET { .. } => unimplemented!("Battle.NET servers are not implemented"),
     };
 
-    handler.await
+    // handler.await
 }

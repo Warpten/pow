@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["pow", "pow-macro", "pow-net", "pow-packets"]
+members = ["pow", "pow-macro"]
 
 [workspace.dependencies]
 anyhow = "1.0.100"
