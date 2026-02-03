@@ -1,0 +1,13 @@
+[package]
+name = "protogen-next"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+protobuf = "4.34.0-rc.1"
+protobuf-well-known-types = "4.34.0-rc.1"
+
+[build-dependencies]
+anyhow.workspace = true
+protobuf-codegen = "4.34.0-rc.1"
+protobuf-well-known-types = "4.34.0-rc.1"

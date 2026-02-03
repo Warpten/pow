@@ -152,7 +152,7 @@ mod test {
         
         async fn handle_logon_proof_request<D>(&mut self, _: LogonProofRequest, _: &mut D)
             -> Result<()>
-                where D:crate::packets::WriteExt
+                where D: WriteExt
         {
             Ok(assert!(false, "Should never be called"))
         }
@@ -198,7 +198,7 @@ mod test {
         // This test does not send this packet.
         async fn handle_logon_proof_request<D>(&mut self, _: LogonProofRequest, _: &mut D)
             -> Result<()>
-                where D:crate::packets::WriteExt
+                where D: WriteExt
         {
             Ok(assert!(false, "Should never be called"))
         }

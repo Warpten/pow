@@ -1,0 +1,26 @@
+[package]
+name = "protogen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+syn = { version = "2", features = ["full", "printing"] }
+quote = "1"
+proc-macro2 = "1.0"
+prost-reflect = {  version = "0.16.3", features = ["text-format"] }
+prost = "0.14.3"
+itertools = "0.14.0"
+heck.workspace = true
+protobuf-codegen = "4.34.0-rc.1"
+protobuf-well-known-types = "4.34.0-rc.1"
+
+[dev-dependencies]
+assert_tokens_eq = "0.1.0"
+
+[build-dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1.0"
+prost-build = "0.14.3"
+prost-reflect-build = "0.16.0"

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(clippy::needless_lifetimes)]
 
 use anyhow::Result;
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -38,8 +39,9 @@ macro_rules! parser {
                     if self.limit < std::mem::size_of::<$ty>() {
                         Err(Error::EOF.into())
                     } else {
+                        let value = self.inner.[<read_ $ty _be>]().await?;
                         self.limit -= std::mem::size_of::<$ty>();
-                        self.inner.[<read_ $ty _be>]().await
+                        Ok(value)
                     }
                 }
 
@@ -47,8 +49,9 @@ macro_rules! parser {
                     if self.limit < std::mem::size_of::<$ty>() {
                         Err(Error::EOF.into())
                     } else {
+                        let value = self.inner.[<read_ $ty _le>]().await?;
                         self.limit -= std::mem::size_of::<$ty>();
-                        self.inner.[<read_ $ty _le>]().await
+                        Ok(value)
                     }
                 }
             }
@@ -121,18 +124,6 @@ impl<Target> ReadExt for Target where Target: AsyncRead + Unpin + Send {
         Take { inner: self, limit }
     }
 
-    fn read_u8<T: From<u8>>(&mut self) -> impl Future<Output = Result<T>> + Send {
-        async {
-            Ok(AsyncReadExt::read_u8(self).await?.into())
-        }
-    }
-
-    fn read_i8<T: From<i8>>(&mut self) -> impl Future<Output = Result<T>> + Send {
-        async {
-            Ok(AsyncReadExt::read_i8(self).await?.into())
-        }
-    }
-
     fn read_slice(&mut self, size: usize) -> impl Future<Output = Result<Box<[u8]>>> + Send {
         async move {
             let mut buf = Vec::with_capacity(size);
@@ -157,6 +148,18 @@ impl<Target> ReadExt for Target where Target: AsyncRead + Unpin + Send {
         }
     }
 
+    fn read_u8<T: From<u8>>(&mut self) -> impl Future<Output = Result<T>> + Send {
+        async {
+            Ok(AsyncReadExt::read_u8(self).await?.into())
+        }
+    }
+
+    fn read_i8<T: From<i8>>(&mut self) -> impl Future<Output = Result<T>> + Send {
+        async {
+            Ok(AsyncReadExt::read_i8(self).await?.into())
+        }
+    }
+
     parser! { impl read u16, u32, u64, u128, i16, i32, i64, i128, f32, f64 }
 }
 
@@ -172,6 +175,30 @@ impl<Inner> ReadExt for Take<'_, Inner>
         Take { inner: self, limit }
     }
 
+    fn read_slice(&mut self, size: usize) -> impl Future<Output = Result<Box<[u8]>>> {
+        async move {
+            if self.limit < size {
+                Err(Error::EOF.into())
+            } else {
+                let result = self.inner.read_slice(size).await?;
+                self.limit -= size;
+                Ok(result)
+            }
+        }
+    }
+
+    fn read_exact_slice<const N: usize>(&mut self) -> impl Future<Output = Result<[u8; N]>> {
+        async move {
+            if self.limit < N {
+                Err(Error::EOF.into())
+            } else {
+                let value = self.inner.read_exact_slice().await?;
+                self.limit -= N;
+                Ok(value)
+            }
+        }
+    }
+
     fn read_u8<T: From<u8>>(&mut self) -> impl Future<Output = Result<T>> {
         async move {
             if self.limit == 0 {
@@ -179,7 +206,6 @@ impl<Inner> ReadExt for Take<'_, Inner>
             } else {
                 let value = self.inner.read_u8().await?;
                 self.limit -= 1;
-
                 Ok(value)
             }
         }
@@ -190,30 +216,9 @@ impl<Inner> ReadExt for Take<'_, Inner>
             if self.limit == 0 {
                 Err(Error::EOF.into())
             } else {
+                let value = self.inner.read_i8().await?;
                 self.limit -= 1;
-                self.inner.read_i8().await
-            }
-        }
-    }
-
-    fn read_slice(&mut self, size: usize) -> impl Future<Output = Result<Box<[u8]>>> {
-        async move {
-            if self.limit < size {
-                Err(Error::EOF.into())
-            } else {
-                self.limit -= size;
-                self.inner.read_slice(size).await
-            }
-        }
-    }
-
-    fn read_exact_slice<const N: usize>(&mut self) -> impl Future<Output = Result<[u8; N]>> {
-        async move {
-            if self.limit < N {
-                Err(Error::EOF.into())
-            } else {
-                self.limit -= N;
-                self.inner.read_exact_slice().await
+                Ok(value)
             }
         }
     }

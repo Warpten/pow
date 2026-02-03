@@ -1,2 +1,11 @@
 target
 .idea
+
+# .proto files.
+**/*.proto
+
+# Protobuf compiler
+**/protoc
+
+# Generated Rust code
+**/proto/*.rs

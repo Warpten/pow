@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["pow", "pow-macro"]
+members = ["pow", "pow-macro", "protogen"]
 
 [workspace.dependencies]
 anyhow = "1.0.100"
@@ -10,6 +10,7 @@ tokio = { version = "1.49.0", features = ["full", "tracing"] }
 futures = "0.3.31"
 tokio-util = "0.7.18"
 async-stream = "0.3.6"
+heck = "0.5.0"
 
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
