@@ -1,14 +1,15 @@
+use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Configuration {
     /// A collection of pipes the `pow` proxy will open.
-    pub pipes: Vec<Pipe>,
+    pub pipes: Vec<PipeConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum Protocol {
+pub enum ProtocolKind {
     Grunt { host: String },
     BattleNET { host: String, port: u16 }
 }
@@ -34,10 +35,10 @@ macro_rules! defaulted_amount {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Pipe {
+pub struct PipeConfig {
     /// The endpoint the `pow` proxy will listen on.
-    pub source: Protocol,
+    pub source: ProtocolKind,
 
     /// The target server the `pow` proxy must impersonate.
-    pub destination: Protocol,
+    pub destination: ProtocolKind,
 }

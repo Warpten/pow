@@ -6,15 +6,17 @@ use tokio::{runtime::Builder, task::JoinSet};
 use tracing::{Level, error, info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*};
 
-use crate::{options::{Configuration, Pipe, Protocol}};
+use crate::{options::{Configuration, PipeConfig, ProtocolKind}};
+use crate::app::app;
 
 mod packets;
 mod options;
 mod grunt;
 mod network;
+mod app;
 
 // Use of a mod or pub mod is not actually necessary.
-pub mod built_info {
+pub mod build_info {
    // The file has been placed there by the build script.
    include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
@@ -49,24 +51,8 @@ fn open_configuration(path: Option<PathBuf>) -> anyhow::Result<Configuration> {
     Ok(result)
 }
 
-async fn main_impl(configuration: Configuration) -> anyhow::Result<()> {
-    let tasks: JoinSet<_> = configuration.pipes.into_iter()
-        .map(create_pipe)
-        .collect();
-
-    // Check the return codes
-    for result in tasks.join_all().await {
-        match result {
-            Ok(()) => (),
-            Err(err) => error!("{}", err)
-        };
-    };
-
-    Ok(())
-}
-
 fn rev_hash() -> String {
-    match (built_info::GIT_VERSION, built_info::GIT_DIRTY) {
+    match (build_info::GIT_VERSION, build_info::GIT_DIRTY) {
         (Some(v), Some(dirty)) => if dirty {
             format!("{}+", v) 
         } else {
@@ -92,18 +78,18 @@ fn main() -> Result<()> {
         .init();
 
     info!("Initializing {} {} ({}, {} build, {} {}-endian)",
-        built_info::PKG_NAME,
-        built_info::PKG_VERSION,
+        build_info::PKG_NAME,
+        build_info::PKG_VERSION,
         rev_hash(),
-        built_info::PROFILE,
-        built_info::TARGET,
-        built_info::CFG_ENDIAN);
+        build_info::PROFILE,
+        build_info::TARGET,
+        build_info::CFG_ENDIAN);
 
     let command_line = CommandLine::parse();
     let configuration = match open_configuration(command_line.config) {
         Ok(cfg) => cfg,
         Err(e) => {
-            error!("An error occured while parsing the configuration file: {}", e);
+            error!("An error occurred while parsing the configuration file: {}", e);
             return Ok(());
         }
     };
@@ -113,16 +99,5 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
         .expect("Failed building the Runtime")
-        .block_on(main_impl(configuration))
-}
-
-async fn create_pipe(pipe: Pipe) -> Result<()> {
-    let handler = match pipe.source {
-        Protocol::Grunt { host } => {
-            unimplemented!("Rewrite in progress")
-        },
-        Protocol::BattleNET { .. } => unimplemented!("Battle.NET servers are not implemented"),
-    };
-
-    // handler.await
+        .block_on(app(configuration))
 }
