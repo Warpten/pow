@@ -1510,6 +1510,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_tokens_eq",
+ "heck",
  "itertools",
  "once_cell",
  "proc-macro2 1.0.104",

@@ -22,7 +22,6 @@ impl HasOptions for ServiceDescriptor {
 
 pub fn find_extension<D: Message + Default, T: HasOptions>(data: &T, name: &str) -> Option<D> {
     data.options().extensions().find(|(extension, _)| {
-        dbg!(extension);
         extension.full_name() == name
     }).map(|(_, value)| {
         value.as_message().map(|v| D::decode(v.encode_to_vec().as_slice()).ok()).flatten()
