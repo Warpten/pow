@@ -86,7 +86,6 @@ pub fn main() -> Result<(), String> {
     CodeGen::new()
         .include("protos")
         .inputs(PROTOS)
-        .protoc_path("./protoc")
         .dependency(protobuf_well_known_types::get_dependency("protobuf_well_known_types"))
         .generate_and_compile()
 }

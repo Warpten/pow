@@ -1,24 +1,21 @@
-#![allow(deprecated)]
+#![allow(deprecated, unused_assignments, dead_code)]
 #![allow(clippy::deprecated)]
 
 mod util;
 mod service;
-mod unparse;
 
 use crate::proto::bgs::protocol::{BgsServiceOptions, SdkServiceOptions};
 use crate::util::find_extension;
 use heck::ToSnakeCase;
 use itertools::Itertools;
 use proc_macro2::{Literal, TokenStream};
-use prost_reflect::prost::Message;
 use prost_reflect::prost_types::FileDescriptorSet;
-use prost_reflect::{DynamicMessage, EnumDescriptor, ExtensionDescriptor, FileDescriptor, MessageDescriptor, ReflectMessage, ServiceDescriptor};
+use prost_reflect::{FileDescriptor, MessageDescriptor, ServiceDescriptor};
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
 use std::hash::Hash;
-use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use protobuf_codegen::CodeGen;
-use syn::{parse_str, File, Ident, Path};
+use syn::{parse_str, Ident, Path};
 use crate::proto::DESCRIPTOR_POOL;
 
 mod proto {
@@ -30,19 +27,6 @@ mod proto {
     ).unwrap());
 
     include!("proto/proto.rs");
-}
-
-mod proto_sources {
-    include!("../protos.rs");
-}
-
-fn decode<T: Message + Default>(value: &DynamicMessage) -> Option<T> {
-    T::decode(value.encode_to_vec().as_slice()).ok()
-}
-
-fn hash(data: &[u8]) -> u32 {
-    data.iter()
-        .fold(0x811C9DC5, |acc, c| (acc ^ (*c as u32)).wrapping_mul(0x1000193))
 }
 
 struct MethodInfo {
@@ -57,11 +41,9 @@ impl ToTokens for MethodInfo {
     }
 }
 
-/// A package combines source as an AST, and the relative path of the module that contains it.
-/// In its purest form, this is just a file that has not yet been emitted to disk.
-struct Package {
-    source: TokenStream,
-    module: Vec<String>,
+fn hash(data: &[u8]) -> u32 {
+    data.iter()
+        .fold(0x811C9DC5, |acc, c| (acc ^ (*c as u32)).wrapping_mul(0x1000193))
 }
 
 /// Holds a type as well as the package that contains it.
@@ -86,7 +68,7 @@ impl DependencyInfo {
         self
     }
 
-    pub fn try_rebase<S: Into<String>>(mut self, base: Option<S>) -> Self {
+    pub fn try_rebase<S: Into<String>>(self, base: Option<S>) -> Self {
         if let Some(base) = base {
             self.rebase(base)
         } else {
@@ -144,23 +126,117 @@ impl Generator {
         Self { fds: fds.into(), ..Default::default() }
     }
 
+    /// Sets a crate path to override the root of the path to generated types.
+    /// By default, service implementation will live in `crate::package::path`,
+    /// where `package::path` maps to the package name in the declaration of
+    /// said service.
     pub fn crate_path<S: Into<String>>(&mut self, path: S) -> &mut Self {
         self.path = Some(path.into());
         self
     }
 
-    pub fn build(&self, protoc_path: impl AsRef<std::path::Path>) -> Result<(), String> {
-        // This generates Protobuf types
+    fn generate_protobuf_types(&self, protoc_path: impl AsRef<std::path::Path>) {
+        // Use the Protobuf generator crate
         CodeGen::new()
             .protoc_path(protoc_path)
+            // Get the path to all proto files.
             .include("protos")
-            .inputs(proto_sources::PROTOS)
+            .inputs([
+                "bgs/low/pb/client/account_service.proto",
+                "bgs/low/pb/client/account_types.proto",
+                "bgs/low/pb/client/attribute_types.proto",
+                "bgs/low/pb/client/authentication_service.proto",
+                "bgs/low/pb/client/challenge_service.proto",
+                "bgs/low/pb/client/content_handle_types.proto",
+                "bgs/low/pb/client/connection_service.proto",
+                "bgs/low/pb/client/embed_types.proto",
+                "bgs/low/pb/client/entity_types.proto",
+                "bgs/low/pb/client/ets_types.proto",
+                "bgs/low/pb/client/event_view_types.proto",
+                "bgs/low/pb/client/friends_service.proto",
+                "bgs/low/pb/client/friends_types.proto",
+                "bgs/low/pb/client/game_utilities_service.proto",
+                "bgs/low/pb/client/game_utilities_types.proto",
+                "bgs/low/pb/client/invitation_types.proto",
+                "bgs/low/pb/client/message_types.proto",
+                "bgs/low/pb/client/notification_types.proto",
+                "bgs/low/pb/client/presence_listener.proto",
+                "bgs/low/pb/client/presence_service.proto",
+                "bgs/low/pb/client/presence_types.proto",
+                "bgs/low/pb/client/profanity_filter_config.proto",
+                "bgs/low/pb/client/resource_service.proto",
+                "bgs/low/pb/client/role_types.proto",
+                "bgs/low/pb/client/rpc_config.proto",
+                "bgs/low/pb/client/rpc_types.proto",
+                "bgs/low/pb/client/semantic_version.proto",
+                "bgs/low/pb/client/voice_types.proto",
+
+                "bgs/low/pb/client/api/client/v1/block_list_listener.proto",
+                "bgs/low/pb/client/api/client/v1/block_list_service.proto",
+                "bgs/low/pb/client/api/client/v1/block_list_types.proto",
+                "bgs/low/pb/client/api/client/v1/channel_id.proto",
+                "bgs/low/pb/client/api/client/v1/channel_types.proto",
+                "bgs/low/pb/client/api/client/v1/club_membership_service.proto",
+                "bgs/low/pb/client/api/client/v1/club_membership_types.proto",
+                "bgs/low/pb/client/api/client/v1/club_stream.proto",
+                "bgs/low/pb/client/api/client/v1/club_types.proto",
+                "bgs/low/pb/client/api/client/v1/club_member.proto",
+                "bgs/low/pb/client/api/client/v1/club_invitation.proto",
+                "bgs/low/pb/client/api/client/v1/club_enum.proto",
+                "bgs/low/pb/client/api/client/v1/club_role.proto",
+                "bgs/low/pb/client/api/client/v1/club_range_set.proto",
+                "bgs/low/pb/client/api/client/v1/club_core.proto",
+                "bgs/low/pb/client/api/client/v1/club_ban.proto",
+                "bgs/low/pb/client/api/client/v1/club_name_generator.proto",
+
+                "bgs/low/pb/client/api/client/v2/notification_service.proto",
+                "bgs/low/pb/client/api/client/v2/notification_types.proto",
+                "bgs/low/pb/client/api/client/v2/report_service.proto",
+                "bgs/low/pb/client/api/client/v2/report_types.proto",
+                "bgs/low/pb/client/api/client/v2/whisper_listener.proto",
+                "bgs/low/pb/client/api/client/v2/whisper_service.proto",
+
+                "bgs/low/pb/client/api/common/v1/club_enum.proto",
+                "bgs/low/pb/client/api/common/v1/club_tag.proto",
+                "bgs/low/pb/client/api/common/v1/club_type.proto",
+                "bgs/low/pb/client/api/common/v1/club_core.proto",
+                "bgs/low/pb/client/api/common/v1/club_member_id.proto",
+                "bgs/low/pb/client/api/common/v1/embed_types.proto",
+                "bgs/low/pb/client/api/common/v1/event_view_types.proto",
+                "bgs/low/pb/client/api/common/v1/invitation_types.proto",
+                "bgs/low/pb/client/api/common/v1/message_types.proto",
+                "bgs/low/pb/client/api/common/v1/voice_types.proto",
+
+                "bgs/low/pb/client/api/common/v2/attribute_types.proto",
+                "bgs/low/pb/client/api/common/v2/game_account_handle.proto",
+                "bgs/low/pb/client/api/common/v2/whisper_types.proto",
+
+                "bgs/low/pb/client/global_extensions/field_options.proto",
+                "bgs/low/pb/client/global_extensions/message_options.proto",
+                "bgs/low/pb/client/global_extensions/method_options.proto",
+                "bgs/low/pb/client/global_extensions/range.proto",
+                "bgs/low/pb/client/global_extensions/register_method_types.proto",
+                "bgs/low/pb/client/global_extensions/routing.proto",
+                "bgs/low/pb/client/global_extensions/service_options.proto",
+
+                "google/protobuf/descriptor.proto",
+            ])
             .dependency(protobuf_well_known_types::get_dependency("protobuf_well_known_types"))
-            .generate_and_compile()?;
+            .generate_and_compile()
+            .expect("Failed to generate Protobuf messages, enums, and extensions.");
+    }
+
+    pub fn build(&self, protoc_path: impl AsRef<std::path::Path>) {
+        self.generate_protobuf_types(protoc_path);
+
+        // Now, generate services.
+        let base_output_dir = std::env::var("OUT_DIR")
+            .expect("Failed to obtain OUT_DIR");
 
         // Read reflection data for services in the descriptor pool and generate the services.
         DESCRIPTOR_POOL.services()
             .map(|svc| {
+                println!("Rendering {}", svc.full_name());
                 let r#impl = self.render_service(&svc);
 
                 let dep = DependencyInfo::from_path(svc.full_name())
@@ -169,21 +245,16 @@ impl Generator {
                 (dep, r#impl)
             })
             .for_each(|(path, contents)| {
-                // Emit files
-                match std::env::var("OUT_DIR") {
-                    Ok(out_dir) => {
-                       // Derive the file path from the full name
-                        let contents = format!("{}", contents);
+                let contents = format!("{}", contents);
 
-                        let path = format!("{}/protobuf_generated/{}", out_dir, path.path.replace("::", "/"));
-                        eprintln!("Generated protobuf code at {}", path);
-                        std::fs::write(path, contents);
-                    },
-                    Err(e) => panic!("Couldn't find where to write files")
-                }
+                let relative_path = format!("/protobuf_generated/{}.rs", path.path.replace("::", "/").to_snake_case());
+                let path = format!("{}{}", base_output_dir, relative_path);
+
+                // Format the file.
+                let contents = prettyplease::unparse(&syn::parse_file(contents.as_str()).expect("Failed to read unformatted code"));
+                std::fs::write(path, contents)
+                    .expect("Failed to write formatted code");
             });
-
-        Ok(())
     }
 
     fn render_file_descriptor(&self, fd: &FileDescriptor) -> TokenStream {
@@ -258,7 +329,7 @@ impl Generator {
             (imports, quote! {
                 #(#methods)*
 
-                pub fn call_server_method<Peer>(&mut self, connection: &mut Peer, token: u32, method: u32, payload: &[u8])
+                fn call_server_method<Peer>(&mut self, connection: &mut Peer, token: u32, method: u32, payload: &[u8])
                     -> impl Future<Output = ()>
                 {
                     match (method & 0x3FFFFFFFu32) {
@@ -283,7 +354,7 @@ impl Generator {
             .chain(client_imports)
             .sorted()
             .unique()
-            .map(|mut dep| dep.try_rebase(self.path.as_ref()))
+            .map(|dep| dep.try_rebase(self.path.as_ref()))
             .collect::<Vec<_>>();
 
         // Emit the entire service along with its dependencies.
@@ -307,10 +378,6 @@ impl Generator {
                 #server
             }
         }
-    }
-
-    fn render_extension(ext: ExtensionDescriptor) -> TokenStream {
-        todo!()
     }
 }
 

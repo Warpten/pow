@@ -17,6 +17,7 @@ tokio-util.workspace = true
 paste.workspace = true
 futures.workspace = true
 async-stream.workspace = true
+protobuf = "4.34.0-rc.1"
 
 pow-macro = { path = "../pow-macro" }
 

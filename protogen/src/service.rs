@@ -3,18 +3,18 @@ use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use prost_reflect::{MethodDescriptor, ServiceDescriptor};
 use quote::{format_ident, quote};
-use crate::{service, DependencyInfo, MethodInfo};
+use crate::{DependencyInfo, MethodInfo};
 use crate::proto::bgs::protocol::BgsMethodOptions;
 use crate::util::find_extension;
 
 #[inline]
-pub(crate) fn render_methods_common<I>(mut items: I) -> (Vec<MethodInfo>, Vec<DependencyInfo>)
+pub(crate) fn render_methods_common<I>(items: I) -> (Vec<MethodInfo>, Vec<DependencyInfo>)
     where I : Iterator<Item = (MethodInfo, Vec<DependencyInfo>)>
 {
     type Accumulator = (Vec<MethodInfo>, Vec<DependencyInfo>);
     type Item = (MethodInfo, Vec<DependencyInfo>);
 
-    let acc = |(mut methods, mut imports): Accumulator, (method, dependencies): Item| {
+    let acc = |(mut methods, imports): Accumulator, (method, dependencies): Item| {
         let imports = imports.into_iter()
             .chain(dependencies.into_iter())
             .collect();
