@@ -19,11 +19,14 @@ use syn::{parse_str, Ident, Path};
 use crate::proto::DESCRIPTOR_POOL;
 
 mod proto {
-    use prost_reflect::DescriptorPool;
     use std::sync::LazyLock;
+    use prost::Message;
+    use prost_reflect::DescriptorPool;
+    use prost_reflect::prost_types::FileDescriptorSet;
 
-    pub static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| DescriptorPool::decode(
-        include_bytes!(concat!(env!("OUT_DIR"), "/file_descriptor_set.bin")).as_ref()
+    pub static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| DescriptorPool::from_file_descriptor_set(
+        FileDescriptorSet::decode(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fd.bin")).as_ref())
+            .expect("FileDescriptorSet decode failed")
     ).unwrap());
 
     include!("proto/proto.rs");
@@ -135,99 +138,30 @@ impl Generator {
         self
     }
 
-    fn generate_protobuf_types(&self, protoc_path: impl AsRef<std::path::Path>) {
+    fn generate_protobuf_types(
+        &self,
+        protoc: impl AsRef<std::path::Path>,
+        protos: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
+        include: impl AsRef<std::path::Path>,
+        output: impl AsRef<std::path::Path>
+    ) {
         // Use the Protobuf generator crate
         CodeGen::new()
-            .protoc_path(protoc_path)
+            .protoc_path(protoc)
             // Get the path to all proto files.
-            .include("protos")
-            .inputs([
-                "bgs/low/pb/client/account_service.proto",
-                "bgs/low/pb/client/account_types.proto",
-                "bgs/low/pb/client/attribute_types.proto",
-                "bgs/low/pb/client/authentication_service.proto",
-                "bgs/low/pb/client/challenge_service.proto",
-                "bgs/low/pb/client/content_handle_types.proto",
-                "bgs/low/pb/client/connection_service.proto",
-                "bgs/low/pb/client/embed_types.proto",
-                "bgs/low/pb/client/entity_types.proto",
-                "bgs/low/pb/client/ets_types.proto",
-                "bgs/low/pb/client/event_view_types.proto",
-                "bgs/low/pb/client/friends_service.proto",
-                "bgs/low/pb/client/friends_types.proto",
-                "bgs/low/pb/client/game_utilities_service.proto",
-                "bgs/low/pb/client/game_utilities_types.proto",
-                "bgs/low/pb/client/invitation_types.proto",
-                "bgs/low/pb/client/message_types.proto",
-                "bgs/low/pb/client/notification_types.proto",
-                "bgs/low/pb/client/presence_listener.proto",
-                "bgs/low/pb/client/presence_service.proto",
-                "bgs/low/pb/client/presence_types.proto",
-                "bgs/low/pb/client/profanity_filter_config.proto",
-                "bgs/low/pb/client/resource_service.proto",
-                "bgs/low/pb/client/role_types.proto",
-                "bgs/low/pb/client/rpc_config.proto",
-                "bgs/low/pb/client/rpc_types.proto",
-                "bgs/low/pb/client/semantic_version.proto",
-                "bgs/low/pb/client/voice_types.proto",
-
-                "bgs/low/pb/client/api/client/v1/block_list_listener.proto",
-                "bgs/low/pb/client/api/client/v1/block_list_service.proto",
-                "bgs/low/pb/client/api/client/v1/block_list_types.proto",
-                "bgs/low/pb/client/api/client/v1/channel_id.proto",
-                "bgs/low/pb/client/api/client/v1/channel_types.proto",
-                "bgs/low/pb/client/api/client/v1/club_membership_service.proto",
-                "bgs/low/pb/client/api/client/v1/club_membership_types.proto",
-                "bgs/low/pb/client/api/client/v1/club_stream.proto",
-                "bgs/low/pb/client/api/client/v1/club_types.proto",
-                "bgs/low/pb/client/api/client/v1/club_member.proto",
-                "bgs/low/pb/client/api/client/v1/club_invitation.proto",
-                "bgs/low/pb/client/api/client/v1/club_enum.proto",
-                "bgs/low/pb/client/api/client/v1/club_role.proto",
-                "bgs/low/pb/client/api/client/v1/club_range_set.proto",
-                "bgs/low/pb/client/api/client/v1/club_core.proto",
-                "bgs/low/pb/client/api/client/v1/club_ban.proto",
-                "bgs/low/pb/client/api/client/v1/club_name_generator.proto",
-
-                "bgs/low/pb/client/api/client/v2/notification_service.proto",
-                "bgs/low/pb/client/api/client/v2/notification_types.proto",
-                "bgs/low/pb/client/api/client/v2/report_service.proto",
-                "bgs/low/pb/client/api/client/v2/report_types.proto",
-                "bgs/low/pb/client/api/client/v2/whisper_listener.proto",
-                "bgs/low/pb/client/api/client/v2/whisper_service.proto",
-
-                "bgs/low/pb/client/api/common/v1/club_enum.proto",
-                "bgs/low/pb/client/api/common/v1/club_tag.proto",
-                "bgs/low/pb/client/api/common/v1/club_type.proto",
-                "bgs/low/pb/client/api/common/v1/club_core.proto",
-                "bgs/low/pb/client/api/common/v1/club_member_id.proto",
-                "bgs/low/pb/client/api/common/v1/embed_types.proto",
-                "bgs/low/pb/client/api/common/v1/event_view_types.proto",
-                "bgs/low/pb/client/api/common/v1/invitation_types.proto",
-                "bgs/low/pb/client/api/common/v1/message_types.proto",
-                "bgs/low/pb/client/api/common/v1/voice_types.proto",
-
-                "bgs/low/pb/client/api/common/v2/attribute_types.proto",
-                "bgs/low/pb/client/api/common/v2/game_account_handle.proto",
-                "bgs/low/pb/client/api/common/v2/whisper_types.proto",
-
-                "bgs/low/pb/client/global_extensions/field_options.proto",
-                "bgs/low/pb/client/global_extensions/message_options.proto",
-                "bgs/low/pb/client/global_extensions/method_options.proto",
-                "bgs/low/pb/client/global_extensions/range.proto",
-                "bgs/low/pb/client/global_extensions/register_method_types.proto",
-                "bgs/low/pb/client/global_extensions/routing.proto",
-                "bgs/low/pb/client/global_extensions/service_options.proto",
-
-                "google/protobuf/descriptor.proto",
-            ])
+            .include(include)
+            .inputs(protos)
+            .output_dir(output)
             .dependency(protobuf_well_known_types::get_dependency("protobuf_well_known_types"))
             .generate_and_compile()
             .expect("Failed to generate Protobuf messages, enums, and extensions.");
     }
 
-    pub fn build(&self, protoc_path: impl AsRef<std::path::Path>) {
-        self.generate_protobuf_types(protoc_path);
+    pub fn build(&self, protoc: impl AsRef<std::path::Path>,
+                 protos: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
+                 include: impl AsRef<std::path::Path>,
+                 output: impl AsRef<std::path::Path>) {
+        self.generate_protobuf_types(protoc, protos, include, output);
 
         // Now, generate services.
         let base_output_dir = std::env::var("OUT_DIR")

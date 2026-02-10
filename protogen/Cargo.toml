@@ -3,6 +3,9 @@ name = "protogen"
 version = "0.1.0"
 edition = "2024"
 
+[profile.dev.build-override]
+debug = true
+
 [dependencies]
 anyhow.workspace = true
 syn = { version = "2", features = ["full", "printing"] }
@@ -24,5 +27,8 @@ assert_tokens_eq = "0.1.0"
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1.0"
+prost-types = "0.14.3"
+prost = "0.14.3"
 prost-build = "0.14.3"
 prost-reflect-build = "0.16.0"
+tempfile = "3.24.0"

@@ -1527,10 +1527,12 @@ dependencies = [
  "prost-build",
  "prost-reflect",
  "prost-reflect-build",
+ "prost-types",
  "protobuf-codegen",
  "protobuf-well-known-types",
  "quote 1.0.42",
  "syn 2.0.111",
+ "tempfile",
 ]
 
 [[package]]
