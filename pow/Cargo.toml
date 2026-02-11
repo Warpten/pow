@@ -27,4 +27,5 @@ tracing-test = "0.1"
 
 [build-dependencies]
 built = { version = "0.8", features = ["git2"] }
+normpath = "1.5.0"
 protogen = { path = "../protogen" }

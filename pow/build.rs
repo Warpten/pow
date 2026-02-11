@@ -1,23 +1,25 @@
 use std::path::PathBuf;
+use normpath::PathExt;
 use protogen::Generator;
 
 fn main() -> std::io::Result<()> {
     built::write_built_file()?;
 
     let root_directory = match std::env::var("CARGO_MANIFEST_DIR") {
-        Ok(dir) => std::fs::canonicalize(PathBuf::from(dir).join("..")).unwrap().display().to_string(),
+        Ok(dir) => PathBuf::from(dir).join("..").normalize()?,
         Err(_) => panic!("CARGO_MANIFEST_DIR is not set"),
     };
 
-    let protoc = format!("{}/protoc", root_directory);
-    assert!(matches!(std::fs::exists(&protoc), Ok(true)), "protoc not found in {}", root_directory);
+    #[cfg(windows)] let protoc = root_directory.join("./protoc.exe");
+    #[cfg(not(windows))] let protoc = root_directory.join("./protoc");
+    assert!(matches!(std::fs::exists(&protoc), Ok(true)), "protoc not found in {:?}", root_directory);
 
-    let proto_root = format!("{}/protos", root_directory);
-    assert!(matches!(std::fs::exists(&proto_root), Ok(true)), "/protos/ subdirectory missing in {}", root_directory);
+    let proto_root = root_directory.join("./protos");
+    assert!(matches!(std::fs::exists(&proto_root), Ok(true)), "/protos/ subdirectory missing in {:?}", root_directory);
 
     macro_rules! make_abs {
         ($p:expr) => {
-            format!("{}/{}", &proto_root, $p)
+            proto_root.join($p)
         };
     }
 
@@ -103,7 +105,7 @@ fn main() -> std::io::Result<()> {
     ];
 
     Generator::default()
-        .build(protoc, &protos, proto_root, "src/protogen");
+        .build(protoc, &protos, &proto_root, root_directory.join("pow/src/protobuf"));
 
     Ok(())
 }

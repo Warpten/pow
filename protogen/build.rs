@@ -6,11 +6,12 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::io;
+use normpath::PathExt;
 
 fn make_file_descriptor_set<S: AsRef<OsStr>>(protoc: S, fd: impl AsRef<OsStr>, paths: &[impl AsRef<Path>], includes: &[impl AsRef<Path>]) -> Option<FileDescriptorSet> {
     let mut command = Command::new(protoc);
     includes.iter().for_each(|i| {
-        command.arg(format!("-I{}", i.as_ref().display()));
+        command.arg(format!("--proto_path={}", i.as_ref().display()));
     });
 
     paths.iter().for_each(|p| {
@@ -18,11 +19,12 @@ fn make_file_descriptor_set<S: AsRef<OsStr>>(protoc: S, fd: impl AsRef<OsStr>, p
     });
 
     // Also include all dependencies so that the set is self-contained.
-    command.arg("--include_imports");
-    command.arg("-o").arg(&fd);
+    command.arg("--include_imports")
+        .arg("--include_source_info")
+        .arg(format!("--descriptor_set_out={}", fd.as_ref().to_string_lossy()));
 
     match command.output() {
-        Ok(_) => (),
+        Ok(_) => println!("Generated a descriptor set"),
         Err(err) => panic!("An error occurred while generating a descriptor set: {}", err),
     };
 
@@ -34,19 +36,20 @@ fn make_file_descriptor_set<S: AsRef<OsStr>>(protoc: S, fd: impl AsRef<OsStr>, p
 
 fn main() -> io::Result<()> {
     let root_directory = match std::env::var("CARGO_MANIFEST_DIR") {
-        Ok(dir) => std::fs::canonicalize(PathBuf::from(dir).join("..")).unwrap().display().to_string(),
+        Ok(dir) => PathBuf::from(dir).join("..").normalize()?,
         Err(_) => panic!("CARGO_MANIFEST_DIR is not set"),
     };
 
-    let protoc = format!("{}/protoc", root_directory);
-    assert!(matches!(std::fs::exists(&protoc), Ok(true)), "protoc not found in {}", root_directory);
+    #[cfg(windows)] let protoc = root_directory.join("./protoc.exe");
+    #[cfg(not(windows))] let protoc = root_directory.join("./protoc");
+    assert!(matches!(std::fs::exists(&protoc), Ok(true)), "protoc not found in {:?}", root_directory);
 
-    let proto_root = format!("{}/protos", root_directory);
-    assert!(matches!(std::fs::exists(&proto_root), Ok(true)), "/protos/ subdirectory missing in {}", root_directory);
+    let proto_root = root_directory.join("protos");
+    assert!(matches!(std::fs::exists(&proto_root), Ok(true)), "/protos/ subdirectory missing in {:?}", root_directory);
 
     macro_rules! make_abs {
         ($p:expr) => {
-            format!("{}/{}", &proto_root, $p)
+            proto_root.join($p)
         };
     }
 
@@ -132,7 +135,7 @@ fn main() -> io::Result<()> {
     ];
 
     let fds = match make_file_descriptor_set(&protoc,
-        format!("{}/fd.bin", root_directory),
+        root_directory.join("file-descriptor-set.bin"),
         &protos,
         &[&proto_root])
     {
@@ -143,16 +146,16 @@ fn main() -> io::Result<()> {
     let mut config = Config::default();
     config.protoc_executable(protoc)
         .compile_well_known_types()
-        .out_dir("src/proto")
-        .include_file("proto.rs");
-
-    config.compile_fds(fds).expect("Failed to compile file descriptor sets");
+        .out_dir("src/metadata")
+        .include_file("proto.rs")
+        .compile_fds(fds)
+        .expect("Failed to compile file descriptor sets");
 
     // However we need reflection data for all services.
-    /*Builder::new()
-        .descriptor_pool("crate::api::DESCRIPTOR_POOL")
+   /* Builder::new()
+        .descriptor_pool("crate::proto::DESCRIPTOR_POOL")
         .compile_protos_with_config(config, &protos, &[&proto_root])
-        .expect("Failed to generate reflection data for services.");
-*/
+        .expect("Failed to generate reflection data for services.");*/
+
     Ok(())
 }

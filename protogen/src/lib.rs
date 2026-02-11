@@ -12,9 +12,13 @@ use proc_macro2::{Literal, TokenStream};
 use prost_reflect::prost_types::FileDescriptorSet;
 use prost_reflect::{FileDescriptor, MessageDescriptor, ServiceDescriptor};
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use std::fs::File;
 use std::hash::Hash;
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::Command;
 use std::str::FromStr;
-use protobuf_codegen::CodeGen;
+use protobuf_codegen::{CodeGen, Dependency};
 use syn::{parse_str, Ident, Path};
 use crate::proto::DESCRIPTOR_POOL;
 
@@ -24,12 +28,11 @@ mod proto {
     use prost_reflect::DescriptorPool;
     use prost_reflect::prost_types::FileDescriptorSet;
 
-    pub static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| DescriptorPool::from_file_descriptor_set(
-        FileDescriptorSet::decode(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fd.bin")).as_ref())
-            .expect("FileDescriptorSet decode failed")
-    ).unwrap());
+    pub static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| DescriptorPool::decode(
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../file-descriptor-set.bin")).as_ref()
+    ).expect("Failed to decode descriptor pool"));
 
-    include!("proto/proto.rs");
+    include!("metadata/proto.rs");
 }
 
 struct MethodInfo {
@@ -145,16 +148,75 @@ impl Generator {
         include: impl AsRef<std::path::Path>,
         output: impl AsRef<std::path::Path>
     ) {
+        let mut cmd = Command::new(protoc.as_ref());
+        for input in protos {
+            cmd.arg(input.as_ref());
+        }
+        if !output.as_ref().exists() {
+            // Attempt to make the directory if it doesn't exist
+            let _ = std::fs::create_dir(&output);
+        }
+
+        println!("cargo:rerun-if-changed={}", include.as_ref().display());
+
+        let dependencies = protobuf_well_known_types::get_dependency("protobuf_well_known_types");
+        for dep in &dependencies {
+            for path in &dep.proto_import_paths {
+                println!("cargo:rerun-if-changed={}", path.display());
+            }
+        }
+
+        let crate_mapping_path = self.generate_crate_mapping_file(&output, dependencies.as_slice());
+
+        cmd.arg(format!("--rust_out={}", output.as_ref().display()))
+            .arg("--rust_opt=experimental-codegen=enabled,kernel=upb")
+            .arg(format!("--proto_path={}", include.as_ref().display()));
+
+        for dep in &dependencies {
+            for path in &dep.proto_import_paths {
+                cmd.arg(format!("--proto_path={}", path.display()));
+            }
+        }
+
+        cmd.arg(format!("--rust_opt=crate_mapping={}", crate_mapping_path.display()));
+
+        dbg!(&cmd);
+
+        match cmd.output() {
+            Ok(outcome) => {
+                println!("{}", std::str::from_utf8(&outcome.stdout).unwrap());
+                eprintln!("{}", std::str::from_utf8(&outcome.stderr).unwrap());
+            },
+            Err(err) => panic!("Failed to generate Protobuf types: {}", err),
+        };
+
         // Use the Protobuf generator crate
-        CodeGen::new()
-            .protoc_path(protoc)
-            // Get the path to all proto files.
-            .include(include)
-            .inputs(protos)
-            .output_dir(output)
-            .dependency(protobuf_well_known_types::get_dependency("protobuf_well_known_types"))
-            .generate_and_compile()
-            .expect("Failed to generate Protobuf messages, enums, and extensions.");
+        // CodeGen::new()
+        //     .protoc_path(protoc)
+        //     // Get the path to all proto files.
+        //     .include(include)
+        //     .inputs(protos)
+        //     .output_dir(output)
+        //     .dependency(protobuf_well_known_types::get_dependency("protobuf_well_known_types"))
+        //     .generate_and_compile()
+        //     .expect("Failed to generate Protobuf messages, enums, and extensions.");
+    }
+
+    fn generate_crate_mapping_file(
+        &self,
+        output: impl AsRef<std::path::Path>,
+        dependencies: &[Dependency]
+    ) -> PathBuf {
+        let crate_mapping_path = output.as_ref().join("crate_mapping.txt");
+        let mut file = File::create(crate_mapping_path.clone()).unwrap();
+        for dep in dependencies {
+            file.write_all(format!("{}\n", dep.crate_name).as_bytes()).unwrap();
+            file.write_all(format!("{}\n", dep.proto_files.len()).as_bytes()).unwrap();
+            for f in &dep.proto_files {
+                file.write_all(format!("{}\n", f).as_bytes()).unwrap();
+            }
+        }
+        crate_mapping_path
     }
 
     pub fn build(&self, protoc: impl AsRef<std::path::Path>,
