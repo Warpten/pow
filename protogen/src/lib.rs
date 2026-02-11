@@ -4,32 +4,36 @@
 mod util;
 mod service;
 
+use std::any::Any;
 use crate::proto::bgs::protocol::{BgsServiceOptions, SdkServiceOptions};
 use crate::util::find_extension;
-use heck::ToSnakeCase;
 use itertools::Itertools;
 use proc_macro2::{Literal, TokenStream};
 use prost_reflect::prost_types::FileDescriptorSet;
 use prost_reflect::{FileDescriptor, MessageDescriptor, ServiceDescriptor};
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
-use std::fs::File;
+use std::collections::HashMap;
+use std::fmt::Formatter;
+use std::fs::{self, File};
 use std::hash::Hash;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
 use protobuf_codegen::{CodeGen, Dependency};
-use syn::{parse_str, Ident, Path};
+use syn::{parse_str, Ident, Item, Path};
 use crate::proto::DESCRIPTOR_POOL;
 
 mod proto {
     use std::sync::LazyLock;
-    use prost::Message;
     use prost_reflect::DescriptorPool;
-    use prost_reflect::prost_types::FileDescriptorSet;
 
     pub static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| DescriptorPool::decode(
+        {
+            eprintln!("Loading fds.bin from {}", env!("CARGO_MANIFEST_DIR"));
+
         include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../file-descriptor-set.bin")).as_ref()
+        }
     ).expect("Failed to decode descriptor pool"));
 
     include!("metadata/proto.rs");
@@ -121,6 +125,16 @@ impl ToTokens for DependencyInfo {
     }
 }
 
+struct Bucket<'a> {
+    items: Vec<&'a syn::Item>,
+    path: syn::Path,
+}
+impl Bucket<'_> {
+    pub fn new(path: syn::Path) -> Self {
+        Self { path, items: vec![] }
+    }
+}
+
 #[derive(Default)]
 pub struct Generator {
     fds: Vec<FileDescriptorSet>,
@@ -144,18 +158,17 @@ impl Generator {
     fn generate_protobuf_types(
         &self,
         protoc: impl AsRef<std::path::Path>,
-        protos: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
+        protos: &[impl AsRef<std::path::Path>],
         include: impl AsRef<std::path::Path>,
         output: impl AsRef<std::path::Path>
-    ) {
+    ) -> Vec<std::path::PathBuf> {
         let mut cmd = Command::new(protoc.as_ref());
         for input in protos {
             cmd.arg(input.as_ref());
         }
-        if !output.as_ref().exists() {
-            // Attempt to make the directory if it doesn't exist
-            let _ = std::fs::create_dir(&output);
-        }
+
+        // Attempt to make the directory if it doesn't exist
+        let _ = std::fs::create_dir_all(&output);
 
         println!("cargo:rerun-if-changed={}", include.as_ref().display());
 
@@ -180,8 +193,6 @@ impl Generator {
 
         cmd.arg(format!("--rust_opt=crate_mapping={}", crate_mapping_path.display()));
 
-        dbg!(&cmd);
-
         match cmd.output() {
             Ok(outcome) => {
                 println!("{}", std::str::from_utf8(&outcome.stdout).unwrap());
@@ -190,16 +201,27 @@ impl Generator {
             Err(err) => panic!("Failed to generate Protobuf types: {}", err),
         };
 
-        // Use the Protobuf generator crate
-        // CodeGen::new()
-        //     .protoc_path(protoc)
-        //     // Get the path to all proto files.
-        //     .include(include)
-        //     .inputs(protos)
-        //     .output_dir(output)
-        //     .dependency(protobuf_well_known_types::get_dependency("protobuf_well_known_types"))
-        //     .generate_and_compile()
-        //     .expect("Failed to generate Protobuf messages, enums, and extensions.");
+        fn collect_sources<P: AsRef<std::path::Path>>(dir: &P) -> Vec<std::path::PathBuf> {
+            let mut results = Vec::new();
+
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+
+                    if path.is_dir() {
+                        results.extend(collect_sources(&path));
+                    } else if let Some(ext) = path.extension() {
+                        if ext == "rs" && path.to_string_lossy().ends_with(".u.pb.rs") {
+                            results.push(path);
+                        }
+                    }
+                }
+            }
+
+            results
+        }
+
+        collect_sources(&output)
     }
 
     fn generate_crate_mapping_file(
@@ -219,15 +241,76 @@ impl Generator {
         crate_mapping_path
     }
 
+    /// Finds every u.pb.rs file and cuts up:
+    ///   * `<T>`
+    ///   * `<T>View`
+    ///   * `<T>ViewMut`
+    ///   * package__package__package__<T>__msg_init
+    ///   * and every associated trait
+    ///
+    /// into a `<T>.pb.rs` file.
+    fn cut_files(&self, protos: impl IntoIterator<Item = impl AsRef<std::path::Path>>) {
+        protos.into_iter().for_each(|proto| {
+            let contents = fs::read_to_string(&proto)
+                .expect(format!("Failed to read file {}", proto.as_ref().display()).as_str());
+
+            let contents = syn::parse_file(&contents)
+                .expect(format!("Failed to parse file {}", proto.as_ref().display()).as_str());
+
+            let targets = contents.items.iter().filter_map(|item| {
+                match item {
+                    syn::Item::Struct(structure) => {
+                        let mut name =  structure.ident.to_string();
+                        if let Some(stem) = name.strip_suffix("View<'msg>") {
+                            name = stem.to_string();
+                        } else if let Some(stem) = name.strip_suffix("Mut<'msg>") {
+                            name = stem.to_string();
+                        }
+
+                        if let Ok(path) = syn::parse_str::<Path>(&name) {
+                            Some((path, item))
+                        } else {
+                            None
+                        }
+                    },
+                    syn::Item::Impl(implementation) => match &*implementation.self_ty {
+                        syn::Type::Path(type_path) => Some((type_path.path.clone(), item)),
+                        _ => None,
+                    },
+                    syn::Item::Const(_) => None,
+                    syn::Item::Static(st) => {
+                        let mut ident = st.ident.to_string();
+                        if let Some(stem) = ident.strip_suffix("_msg_init") {
+                            let path: syn::Path = syn::parse_str(ident.replace("__", "::").as_str())
+                                .expect("Failed to parse static item");
+
+                            dbg!("{:?}", path.to_token_stream());
+
+                            Some((path, item))
+                        } else {
+                            panic!("{}", ident)
+                        }
+                    },
+                    _ => panic!("{:?}", item.to_token_stream()),
+                }
+            });
+
+            let mut buckets = HashMap::new();
+            for (path, target) in targets {
+                buckets.entry(path.get_ident().expect("Failed to get ident").to_string())
+                    .or_insert(Bucket::new(path))
+                    .items.push(target);
+            }
+
+        });
+    }
+
     pub fn build(&self, protoc: impl AsRef<std::path::Path>,
-                 protos: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
+                 protos: &[impl AsRef<std::path::Path>],
                  include: impl AsRef<std::path::Path>,
                  output: impl AsRef<std::path::Path>) {
-        self.generate_protobuf_types(protoc, protos, include, output);
-
-        // Now, generate services.
-        let base_output_dir = std::env::var("OUT_DIR")
-            .expect("Failed to obtain OUT_DIR");
+        let outputs = self.generate_protobuf_types(protoc, &protos, include, &output);
+        self.cut_files(outputs);
 
         // Read reflection data for services in the descriptor pool and generate the services.
         DESCRIPTOR_POOL.services()
@@ -243,11 +326,19 @@ impl Generator {
             .for_each(|(path, contents)| {
                 let contents = format!("{}", contents);
 
-                let relative_path = format!("/protobuf_generated/{}.rs", path.path.replace("::", "/").to_snake_case());
-                let path = format!("{}{}", base_output_dir, relative_path);
+                let path = output.as_ref()
+                    .join(path.typename.replace(".", "/"))
+                    .join("mod.pb.rs");
+
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
 
                 // Format the file.
                 let contents = prettyplease::unparse(&syn::parse_file(contents.as_str()).expect("Failed to read unformatted code"));
+
+                eprintln!("Writing {:?}", path);
+
                 std::fs::write(path, contents)
                     .expect("Failed to write formatted code");
             });

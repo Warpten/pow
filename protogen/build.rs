@@ -40,8 +40,8 @@ fn main() -> io::Result<()> {
         Err(_) => panic!("CARGO_MANIFEST_DIR is not set"),
     };
 
-    #[cfg(windows)] let protoc = root_directory.join("./protoc.exe");
-    #[cfg(not(windows))] let protoc = root_directory.join("./protoc");
+    #[cfg(windows)] let protoc = root_directory.join("protoc.exe");
+    #[cfg(not(windows))] let protoc = root_directory.join("protoc");
     assert!(matches!(std::fs::exists(&protoc), Ok(true)), "protoc not found in {:?}", root_directory);
 
     let proto_root = root_directory.join("protos");
@@ -143,6 +143,9 @@ fn main() -> io::Result<()> {
         _ => panic!("Failed to create a file descriptor set for extensions")
     };
 
+    // Create the output directory if it doesn't exist.
+    let _ = std::fs::create_dir_all("src/metadata");
+
     let mut config = Config::default();
     config.protoc_executable(protoc)
         .compile_well_known_types()
@@ -150,12 +153,6 @@ fn main() -> io::Result<()> {
         .include_file("proto.rs")
         .compile_fds(fds)
         .expect("Failed to compile file descriptor sets");
-
-    // However we need reflection data for all services.
-   /* Builder::new()
-        .descriptor_pool("crate::proto::DESCRIPTOR_POOL")
-        .compile_protos_with_config(config, &protos, &[&proto_root])
-        .expect("Failed to generate reflection data for services.");*/
 
     Ok(())
 }

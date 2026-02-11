@@ -11,10 +11,10 @@ fn main() -> std::io::Result<()> {
     };
 
     #[cfg(windows)] let protoc = root_directory.join("./protoc.exe");
-    #[cfg(not(windows))] let protoc = root_directory.join("./protoc");
+    #[cfg(not(windows))] let protoc = root_directory.join("protoc");
     assert!(matches!(std::fs::exists(&protoc), Ok(true)), "protoc not found in {:?}", root_directory);
 
-    let proto_root = root_directory.join("./protos");
+    let proto_root = root_directory.join("protos");
     assert!(matches!(std::fs::exists(&proto_root), Ok(true)), "/protos/ subdirectory missing in {:?}", root_directory);
 
     macro_rules! make_abs {
