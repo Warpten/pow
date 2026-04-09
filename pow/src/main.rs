@@ -1,29 +1,32 @@
-use std::{fs::File, io::BufReader, path::PathBuf};
 use anyhow::Result;
 use clap::Parser;
 use console_subscriber::ConsoleLayer;
+use std::{fs::File, io::BufReader, path::PathBuf};
 use tokio::runtime::Builder;
 use tracing::{Level, error, info, level_filters::LevelFilter};
 use tracing_subscriber::{fmt, prelude::*};
 
-use crate::options::Configuration;
 use crate::app::app;
+use crate::options::Configuration;
 
 mod packets;
-mod protobuf;
-mod options;
+// mod protobuf;
+mod app;
 mod grunt;
 mod network;
-mod app;
+mod options;
 
 // Use of a mod or pub mod is not actually necessary.
 pub mod build_info {
-   // The file has been placed there by the build script.
-   include!(concat!(env!("OUT_DIR"), "/built.rs"));
+    // The file has been placed there by the build script.
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
 #[derive(Parser)]
-#[command(version, about = "A translation layer proxy for World of Warcraft", long_about = r#"
+#[command(
+    version,
+    about = "A translation layer proxy for World of Warcraft",
+    long_about = r#"
     A translation layer proxy for World of Warcraft.
 
     pow ("Packet of Warcraft") is a translation layer proxy which aims to enable users to connect to modern
@@ -35,7 +38,8 @@ pub mod build_info {
     on, including but not limited to:
       - Database files (models, spells, creatures, terrain...)
       - Protocol parity (1-1 translation between a protocol and another)
-"#)]
+"#
+)]
 struct CommandLine {
     /// A path to the configuration file for this instance of the `pow` proxy.
     #[arg(long, value_name = "FILE")]
@@ -54,12 +58,14 @@ fn open_configuration(path: Option<PathBuf>) -> anyhow::Result<Configuration> {
 
 fn rev_hash() -> String {
     match (build_info::GIT_VERSION, build_info::GIT_DIRTY) {
-        (Some(v), Some(dirty)) => if dirty {
-            format!("{}+", v) 
-        } else {
-            v.to_string()
-        },
-        _ => "unknown".to_string()
+        (Some(v), Some(dirty)) => {
+            if dirty {
+                format!("{}+", v)
+            } else {
+                v.to_string()
+            }
+        }
+        _ => "unknown".to_string(),
     }
 }
 
@@ -69,22 +75,19 @@ fn main() -> Result<()> {
         .with_timer(fmt::time::uptime())
         .with_level(true)
         .with_filter(LevelFilter::from_level(Level::INFO));
-    let console_layer = ConsoleLayer::builder()
-        .with_default_env()
-        .spawn();
+    let console_layer = ConsoleLayer::builder().with_default_env().spawn();
 
-    tracing_subscriber::registry()
-        .with(logger)
-        .with(console_layer)
-        .init();
+    tracing_subscriber::registry().with(logger).with(console_layer).init();
 
-    info!("Initializing {} {} ({}, {} build, {} {}-endian)",
+    info!(
+        "Initializing {} {} ({}, {} build, {} {}-endian)",
         build_info::PKG_NAME,
         build_info::PKG_VERSION,
         rev_hash(),
         build_info::PROFILE,
         build_info::TARGET,
-        build_info::CFG_ENDIAN);
+        build_info::CFG_ENDIAN
+    );
 
     let command_line = CommandLine::parse();
     let configuration = match open_configuration(command_line.config) {

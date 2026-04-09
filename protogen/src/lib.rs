@@ -1,17 +1,19 @@
 #![allow(deprecated, unused_assignments, dead_code)]
 #![allow(clippy::deprecated)]
 
-mod util;
 mod service;
+mod util;
 
-use std::any::Any;
+use crate::proto::DESCRIPTOR_POOL;
 use crate::proto::bgs::protocol::{BgsServiceOptions, SdkServiceOptions};
 use crate::util::find_extension;
 use itertools::Itertools;
 use proc_macro2::{Literal, TokenStream};
 use prost_reflect::prost_types::FileDescriptorSet;
 use prost_reflect::{FileDescriptor, MessageDescriptor, ServiceDescriptor};
-use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use protobuf_codegen::{CodeGen, Dependency};
+use quote::{ToTokens, TokenStreamExt, format_ident, quote};
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use std::fs::{self, File};
@@ -20,21 +22,20 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str::FromStr;
-use protobuf_codegen::{CodeGen, Dependency};
-use syn::{parse_str, Ident, Item, Path};
-use crate::proto::DESCRIPTOR_POOL;
+use syn::{Ident, Item, Path, parse_str};
 
 mod proto {
-    use std::sync::LazyLock;
     use prost_reflect::DescriptorPool;
+    use std::sync::LazyLock;
 
-    pub static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| DescriptorPool::decode(
-        {
+    pub static DESCRIPTOR_POOL: LazyLock<DescriptorPool> = LazyLock::new(|| {
+        DescriptorPool::decode({
             eprintln!("Loading fds.bin from {}", env!("CARGO_MANIFEST_DIR"));
 
-        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../file-descriptor-set.bin")).as_ref()
-        }
-    ).expect("Failed to decode descriptor pool"));
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../file-descriptor-set.bin")).as_ref()
+        })
+        .expect("Failed to decode descriptor pool")
+    });
 
     include!("metadata/proto.rs");
 }
@@ -65,7 +66,7 @@ struct DependencyInfo {
     path: String,
 
     /// The name of this type.
-    typename: String
+    typename: String,
 }
 
 impl DependencyInfo {
@@ -79,11 +80,7 @@ impl DependencyInfo {
     }
 
     pub fn try_rebase<S: Into<String>>(self, base: Option<S>) -> Self {
-        if let Some(base) = base {
-            self.rebase(base)
-        } else {
-            self
-        }
+        if let Some(base) = base { self.rebase(base) } else { self }
     }
 
     pub fn ident(&self) -> Ident {
@@ -99,24 +96,20 @@ impl DependencyInfo {
     }
 
     pub fn from_path(path: &str) -> Self {
-        let tokens : [&str; 2] = path.rsplitn(2, ".")
-            .collect_array()
-            .expect("Should match");
+        let tokens: [&str; 2] = path.rsplitn(2, ".").collect_array().expect("Should match");
 
         Self {
             base: "crate".to_string(),
             path: tokens[0].replace(".", "::").to_string(),
-            typename: tokens[1].to_string()
+            typename: tokens[1].to_string(),
         }
     }
 }
 
 impl ToTokens for DependencyInfo {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let base = parse_str::<Path>(self.base.replace(".", "::").as_str())
-            .expect("invalid base path");
-        let path = parse_str::<Path>(self.path.replace(".", "::").as_str())
-            .expect("invalid path");
+        let base = parse_str::<Path>(self.base.replace(".", "::").as_str()).expect("invalid base path");
+        let path = parse_str::<Path>(self.path.replace(".", "::").as_str()).expect("invalid path");
         let name = format_ident!("{}", &self.typename);
 
         tokens.append_all(quote! {
@@ -143,7 +136,10 @@ pub struct Generator {
 
 impl Generator {
     pub fn new<C: Into<Vec<FileDescriptorSet>>>(fds: C) -> Self {
-        Self { fds: fds.into(), ..Default::default() }
+        Self {
+            fds: fds.into(),
+            ..Default::default()
+        }
     }
 
     /// Sets a crate path to override the root of the path to generated types.
@@ -160,7 +156,7 @@ impl Generator {
         protoc: impl AsRef<std::path::Path>,
         protos: &[impl AsRef<std::path::Path>],
         include: impl AsRef<std::path::Path>,
-        output: impl AsRef<std::path::Path>
+        output: impl AsRef<std::path::Path>,
     ) -> Vec<std::path::PathBuf> {
         let mut cmd = Command::new(protoc.as_ref());
         for input in protos {
@@ -197,7 +193,7 @@ impl Generator {
             Ok(outcome) => {
                 println!("{}", std::str::from_utf8(&outcome.stdout).unwrap());
                 eprintln!("{}", std::str::from_utf8(&outcome.stderr).unwrap());
-            },
+            }
             Err(err) => panic!("Failed to generate Protobuf types: {}", err),
         };
 
@@ -224,16 +220,13 @@ impl Generator {
         collect_sources(&output)
     }
 
-    fn generate_crate_mapping_file(
-        &self,
-        output: impl AsRef<std::path::Path>,
-        dependencies: &[Dependency]
-    ) -> PathBuf {
+    fn generate_crate_mapping_file(&self, output: impl AsRef<std::path::Path>, dependencies: &[Dependency]) -> PathBuf {
         let crate_mapping_path = output.as_ref().join("crate_mapping.txt");
         let mut file = File::create(crate_mapping_path.clone()).unwrap();
         for dep in dependencies {
             file.write_all(format!("{}\n", dep.crate_name).as_bytes()).unwrap();
-            file.write_all(format!("{}\n", dep.proto_files.len()).as_bytes()).unwrap();
+            file.write_all(format!("{}\n", dep.proto_files.len()).as_bytes())
+                .unwrap();
             for f in &dep.proto_files {
                 file.write_all(format!("{}\n", f).as_bytes()).unwrap();
             }
@@ -251,96 +244,95 @@ impl Generator {
     /// into a `<T>.pb.rs` file.
     fn cut_files(&self, protos: impl IntoIterator<Item = impl AsRef<std::path::Path>>) {
         protos.into_iter().for_each(|proto| {
-            let contents = fs::read_to_string(&proto)
-                .expect(format!("Failed to read file {}", proto.as_ref().display()).as_str());
+            let contents =
+                fs::read_to_string(&proto).expect(format!("Failed to read file {}", proto.as_ref().display()).as_str());
 
             let contents = syn::parse_file(&contents)
                 .expect(format!("Failed to parse file {}", proto.as_ref().display()).as_str());
 
-            let targets = contents.items.iter().filter_map(|item| {
-                match item {
-                    syn::Item::Struct(structure) => {
-                        let mut name =  structure.ident.to_string();
-                        if let Some(stem) = name.strip_suffix("View<'msg>") {
-                            name = stem.to_string();
-                        } else if let Some(stem) = name.strip_suffix("Mut<'msg>") {
-                            name = stem.to_string();
-                        }
+            let targets = contents.items.iter().filter_map(|item| match item {
+                syn::Item::Struct(structure) => {
+                    let mut name = structure.ident.to_string();
+                    if let Some(stem) = name.strip_suffix("View<'msg>") {
+                        name = stem.to_string();
+                    } else if let Some(stem) = name.strip_suffix("Mut<'msg>") {
+                        name = stem.to_string();
+                    }
 
-                        if let Ok(path) = syn::parse_str::<Path>(&name) {
-                            Some((path, item))
-                        } else {
-                            None
-                        }
-                    },
-                    syn::Item::Impl(implementation) => match &*implementation.self_ty {
-                        syn::Type::Path(type_path) => Some((type_path.path.clone(), item)),
-                        _ => None,
-                    },
-                    syn::Item::Const(_) => None,
-                    syn::Item::Static(st) => {
-                        let mut ident = st.ident.to_string();
-                        if let Some(stem) = ident.strip_suffix("_msg_init") {
-                            let path: syn::Path = syn::parse_str(ident.replace("__", "::").as_str())
-                                .expect("Failed to parse static item");
-
-                            dbg!("{:?}", path.to_token_stream());
-
-                            Some((path, item))
-                        } else {
-                            panic!("{}", ident)
-                        }
-                    },
-                    _ => panic!("{:?}", item.to_token_stream()),
+                    if let Ok(path) = syn::parse_str::<Path>(&name) {
+                        Some((path, item))
+                    } else {
+                        None
+                    }
                 }
+                syn::Item::Impl(implementation) => match &*implementation.self_ty {
+                    syn::Type::Path(type_path) => Some((type_path.path.clone(), item)),
+                    _ => None,
+                },
+                syn::Item::Const(_) => None,
+                syn::Item::Static(st) => {
+                    let ident = st.ident.to_string();
+                    if let Some(stem) = ident.strip_suffix("_msg_init") {
+                        let path: syn::Path =
+                            syn::parse_str(ident.replace("__", "::").as_str()).expect("Failed to parse static item");
+
+                        Some((path, item))
+                    } else {
+                        panic!("{}", ident)
+                    }
+                }
+                _ => panic!("{:?}", item.to_token_stream()),
             });
 
             let mut buckets = HashMap::new();
             for (path, target) in targets {
-                buckets.entry(path.get_ident().expect("Failed to get ident").to_string())
+                buckets
+                    .entry(path.get_ident().expect("Failed to get ident").to_string())
                     .or_insert(Bucket::new(path))
-                    .items.push(target);
+                    .items
+                    .push(target);
             }
-
         });
     }
 
-    pub fn build(&self, protoc: impl AsRef<std::path::Path>,
-                 protos: &[impl AsRef<std::path::Path>],
-                 include: impl AsRef<std::path::Path>,
-                 output: impl AsRef<std::path::Path>) {
+    pub fn build(
+        &self,
+        protoc: impl AsRef<std::path::Path>,
+        protos: &[impl AsRef<std::path::Path>],
+        include: impl AsRef<std::path::Path>,
+        output: impl AsRef<std::path::Path>,
+    ) {
         let outputs = self.generate_protobuf_types(protoc, &protos, include, &output);
-        self.cut_files(outputs);
+        // self.cut_files(outputs);
 
         // Read reflection data for services in the descriptor pool and generate the services.
-        DESCRIPTOR_POOL.services()
+        DESCRIPTOR_POOL
+            .services()
             .map(|svc| {
                 println!("Rendering {}", svc.full_name());
                 let r#impl = self.render_service(&svc);
 
-                let dep = DependencyInfo::from_path(svc.full_name())
-                    .try_rebase(self.path.as_ref());
+                let dep = DependencyInfo::from_path(svc.full_name()).try_rebase(self.path.as_ref());
 
                 (dep, r#impl)
             })
             .for_each(|(path, contents)| {
                 let contents = format!("{}", contents);
 
-                let path = output.as_ref()
-                    .join(path.typename.replace(".", "/"))
-                    .join("mod.pb.rs");
+                let path = output.as_ref().join(path.typename.replace(".", "/")).join("mod.pb.rs");
 
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
 
                 // Format the file.
-                let contents = prettyplease::unparse(&syn::parse_file(contents.as_str()).expect("Failed to read unformatted code"));
+                let contents = prettyplease::unparse(
+                    &syn::parse_file(contents.as_str()).expect("Failed to read unformatted code"),
+                );
 
                 eprintln!("Writing {:?}", path);
 
-                std::fs::write(path, contents)
-                    .expect("Failed to write formatted code");
+                std::fs::write(path, contents).expect("Failed to write formatted code");
             });
     }
 
@@ -357,11 +349,9 @@ impl Generator {
         let name = format_ident!("{}", svc.name());
         let full_name = svc.full_name();
 
-        let make_token_hash= |name: &[u8]| {
+        let make_token_hash = |name: &[u8]| {
             let hash = hash(name);
-            Literal::from_str(
-                &format!("0x{:X}u32", hash)
-            ).unwrap()
+            Literal::from_str(&format!("0x{:X}u32", hash)).unwrap()
         };
 
         let sdk_service_options: Option<SdkServiceOptions> = find_extension(svc, "bgs.protocol.sdk_service_options");
@@ -379,7 +369,8 @@ impl Generator {
                     #[doc = "Returns the currently active hash."]
                     fn current_hash(&self) -> u32;
                 }
-            }).unwrap_or_else(|| {
+            })
+            .unwrap_or_else(|| {
                 let name_hash = make_token_hash(full_name.as_bytes());
 
                 quote! {
@@ -397,11 +388,14 @@ impl Generator {
         let (client_imports, client) = if inbound {
             let (methods, imports) = service::render_methods(&svc, service::render_client_handler);
 
-            (imports, quote! {
-                #(#methods)*
-            })
+            (
+                imports,
+                quote! {
+                    #(#methods)*
+                },
+            )
         } else {
-            (Vec::new(), quote! { })
+            (Vec::new(), quote! {})
         };
 
         // Extract server interface
@@ -409,35 +403,37 @@ impl Generator {
             let (methods, imports) = service::render_methods(&svc, service::render_server_handler);
 
             // Generate parsers and handler calls.
-            let parse_blocks: Vec<_> = svc.methods()
-                .filter_map(service::render_server_parse_block)
-                .collect();
+            let parse_blocks: Vec<_> = svc.methods().filter_map(service::render_server_parse_block).collect();
 
-            (imports, quote! {
-                #(#methods)*
+            (
+                imports,
+                quote! {
+                    #(#methods)*
 
-                fn call_server_method<Peer>(&mut self, connection: &mut Peer, token: u32, method: u32, payload: &[u8])
-                    -> impl Future<Output = ()>
-                {
-                    match (method & 0x3FFFFFFFu32) {
-                        #(#parse_blocks),*
-                        _ => self.send_status(connection, method, token, ERROR_RPC_INVALID_METHOD)
+                    fn call_server_method<Peer>(&mut self, connection: &mut Peer, token: u32, method: u32, payload: &[u8])
+                        -> impl Future<Output = ()>
+                    {
+                        match (method & 0x3FFFFFFFu32) {
+                            #(#parse_blocks),*
+                            _ => self.send_status(connection, method, token, ERROR_RPC_INVALID_METHOD)
+                        }
                     }
-                }
 
-                fn send_status<Peer>(&mut self, connection: &mut Peer, method: u32, token: u32, status: Self::ErrorCode) -> impl Future<Output = ()>;
+                    fn send_status<Peer>(&mut self, connection: &mut Peer, method: u32, token: u32, status: Self::ErrorCode) -> impl Future<Output = ()>;
 
-                fn send_response<Peer, T>(&mut self, connection: &mut Peer, method: u32, token: u32, message: T) -> impl Future<Output = ()>;
+                    fn send_response<Peer, T>(&mut self, connection: &mut Peer, method: u32, token: u32, message: T) -> impl Future<Output = ()>;
 
-                fn send_malformed_request<Peer>(&mut self, connection: &mut Peer, method: u32, token: u32) -> impl Future<Output = ()>;
-                fn send_invalid_method<Peer>(&mut self, connection: &mut Peer, method: u32, token: u32) -> impl Future<Output = ()>;
-            })
+                    fn send_malformed_request<Peer>(&mut self, connection: &mut Peer, method: u32, token: u32) -> impl Future<Output = ()>;
+                    fn send_invalid_method<Peer>(&mut self, connection: &mut Peer, method: u32, token: u32) -> impl Future<Output = ()>;
+                },
+            )
         } else {
-            (Vec::new(), quote! { })
+            (Vec::new(), quote! {})
         };
 
         // Collect imports, sort them, and make them unique.
-        let imports = server_imports.into_iter()
+        let imports = server_imports
+            .into_iter()
             .chain(client_imports)
             .sorted()
             .unique()
@@ -470,21 +466,21 @@ impl Generator {
 
 #[cfg(test)]
 mod test {
-    use crate::proto::DESCRIPTOR_POOL;
     use crate::Generator;
+    use crate::proto::DESCRIPTOR_POOL;
 
     use assert_tokens_eq::assert_tokens_eq;
     use quote::quote;
 
     #[test]
     pub fn test_service() {
-        let fd = DESCRIPTOR_POOL.files()
+        let fd = DESCRIPTOR_POOL
+            .files()
             .find(|f| f.name() == "bgs/low/pb/client/account_service.proto")
             .expect("Could not find account_service.proto");
 
         // Generate all services.
-        let outcome = Generator::default()
-            .render_file_descriptor(&fd);
+        let outcome = Generator::default().render_file_descriptor(&fd);
 
         assert_tokens_eq! { outcome, quote! {
             use crate::bgs::protocol::NoData;
