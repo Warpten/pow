@@ -11,22 +11,24 @@ pub use write::*;
 /// An [`Identifier`] uniquely identifies a packet.
 pub trait Identifier<Protocol>: Sized {
     /// This function reads the identifier from the stream.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `source`: The source stream.
     /// - `protocol`: The communication [`Protocol`] in use.
     fn recv<Source>(source: &mut Source, protocol: &mut Protocol) -> impl Future<Output = Result<Self>> + Send
-        where Source: ReadExt;
+    where
+        Source: ReadExt;
 
     /// This function writes an identifier to the stream.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `dest`: The destination stream.
     /// - `protocol`: The communication [`Protocol`] in use.
     fn send<Dest>(self, dest: &mut Dest, protocol: &mut Protocol) -> impl Future<Output = Result<()>> + Send
-        where Dest: WriteExt;
+    where
+        Dest: WriteExt;
 }
 
 /// A protocol is in charge of controlling how [`Payload`]s are (de)serialized
@@ -36,81 +38,95 @@ pub trait Protocol: Sized {
     /// - reads an [`Identifier`] by calling [`Identifier::recv`].
     /// - switches on the value of that identifier, parses the correct [`Payload`]
     ///   and immediately handles it by calling a member method on the [`Protocol`].
-    /// 
+    ///
     /// The mechanism that generates the switch is yet to be decided.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `source`: The stream to read from.
     /// - `dest`: The stream to which one or multiple [`Payload`]s may be sent.
-    fn process_incoming<Source, Dest>(&mut self, source: &mut Source, dest: &mut Dest) -> impl Future<Output = Result<()>> + Send
-        where Source: ReadExt, Dest: WriteExt;
+    fn process_incoming<Source, Dest>(
+        &mut self,
+        source: &mut Source,
+        dest: &mut Dest,
+    ) -> impl Future<Output = Result<()>> + Send
+    where
+        Source: ReadExt,
+        Dest: WriteExt;
 
     /// This function:
     /// - Extracts an [`Identifier`] derived from the [`Payload`] and immediately
     ///   writes that [`Identifier`] to the stream.
     /// - Writes the [`Payload`] itself.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `dest`: A stream that can be written to.
     /// - `payload`: A [`Payload`] to send.
     fn send<D, P>(&mut self, dest: &mut D, payload: P) -> impl Future<Output = Result<()>>
-        where D: WriteExt, P: Payload<Self>
+    where
+        D: WriteExt,
+        P: Payload<Self>,
     {
         async {
             payload.identifier().send(dest, self).await?;
             payload.send(dest, self).await?;
             dest.flush().await
-        }   
+        }
     }
 }
 
 pub trait Serializable<P: Protocol>: Sized {
     /// Reads this object from the given stream, using serialization parameters
     /// provided by the protocol.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `source`: The source stream.
     /// - `protocol`: The communication [`Protocol`] in use.
     fn recv<S>(source: &mut S, protocol: &mut P) -> impl Future<Output = Result<Self>> + Send
-        where S: ReadExt;
+    where
+        S: ReadExt;
 
     /// Sends this object on the given stream, using serialization parameters
     /// provided by the protocol.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `dest`: The destination stream.
     /// - `protocol`: The communication [`Protocol`] in use.
     fn send<D>(self, dest: &mut D, protocol: &mut P) -> impl Future<Output = Result<()>>
-        where D: WriteExt;
+    where
+        D: WriteExt;
 }
 
-/// A payload is an object that can be serialized, and that is tied to an identifier.
+/// A payload is an object that can be serialized, and that is tied to an [`Identifier`].
 pub trait Payload<P: Protocol>: Sized {
+    /// The type of identifier this payload is associated to.
     type Identifier: Identifier<P>;
 
+    /// Returns an instance of the identifier this payload is associated to.
     fn identifier(&self) -> Self::Identifier;
 
     /// Reads this object from the given stream, using serialization parameters
     /// provided by the protocol.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `source`: The source stream.
     /// - `protocol`: The communication [`Protocol`] in use.
     fn recv<S>(source: &mut S, protocol: &mut P) -> impl Future<Output = Result<Self>>
-        where S: ReadExt;
+    where
+        S: ReadExt;
 
     /// Sends this object on the given stream, using serialization parameters
     /// provided by the protocol.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// - `dest`: The destination stream.
     /// - `protocol`: The communication [`Protocol`] in use.
     fn send<D>(self, dest: &mut D, protocol: &mut P) -> impl Future<Output = Result<()>>
-        where D: WriteExt;
+    where
+        D: WriteExt;
 }

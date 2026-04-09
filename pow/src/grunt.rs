@@ -4,17 +4,17 @@ pub mod protocol;
 
 #[cfg(test)]
 mod test {
+    use crate::grunt::protocol::{GruntProtocol, LogonProofRequest};
+    use crate::grunt::protocol::{LogonChallengeRequest, Version};
+    use crate::network::connection::Client;
+    use crate::network::server::Server;
+    use crate::network::{Acceptor, LocalPeer, Service};
+    use crate::packets::WriteExt;
+    use anyhow::Result;
     use std::net::IpAddr;
     use tokio::sync::mpsc::{self, Receiver, Sender};
     use tokio_util::sync::CancellationToken;
-    use anyhow::Result;
     use tracing::info;
-    use crate::grunt::protocol::{GruntProtocol, LogonProofRequest};
-    use crate::grunt::protocol::{LogonChallengeRequest, Version};
-    use crate::network::{Acceptor, LocalPeer, Service};
-    use crate::network::connection::Client;
-    use crate::network::server::Server;
-    use crate::packets::WriteExt;
 
     const PACKET_COUNT: usize = 1000;
     const SERVER_ADDRESS: &'static str = "127.0.0.1:8080";
@@ -33,7 +33,9 @@ mod test {
     impl Server for TestServer {
         type Protocol = ServerProtocol;
 
-        fn addr(&self) -> String { SERVER_ADDRESS.to_string() }
+        fn addr(&self) -> String {
+            SERVER_ADDRESS.to_string()
+        }
 
         fn token(&self) -> &CancellationToken {
             &self.token
@@ -50,10 +52,15 @@ mod test {
     /// A test utility method that simply waits for signals that packets were received.
     async fn all_requests_handled(mut receiver: Receiver<u32>) {
         info!("Awaiting packets...");
-        for _ in 0..PACKET_COUNT {
+        for i in 0..PACKET_COUNT {
             match receiver.recv().await {
                 Some(_) => (),
-                None => ()
+                None if i + 1 != PACKET_COUNT => panic!(
+                    "Stopped waiting for packets before all packets were received ({} of {})",
+                    i + 1,
+                    PACKET_COUNT
+                ),
+                None => (),
             };
         }
         info!("Done ({} packets)", PACKET_COUNT);
@@ -79,7 +86,8 @@ mod test {
             let listener = server.bind().await.expect("Failed to bind");
 
             tokio::spawn(async move {
-                server.listen(listener)
+                server
+                    .listen(listener)
                     .await
                     .expect("Grunt server could not start listening.");
             })
@@ -88,11 +96,9 @@ mod test {
         // Now spin up a client. We use a clone of the protocol the server
         // uses just so we can share state between the client and the server
         // for this test.
-        let mut client = Client::connect(
-            SERVER_ADDRESS,
-            ClientProtocol { version: 8 },
-            CancellationToken::new()
-        ).await.expect("Unable to connect to local server");
+        let mut client = Client::connect(SERVER_ADDRESS, ClientProtocol { version: 8 }, CancellationToken::new())
+            .await
+            .expect("Unable to connect to local server");
         assert!(client.ip().is_ipv4());
 
         // Span a task that will complete when all packets have been processed.
@@ -102,24 +108,25 @@ mod test {
         let send_task = tokio::spawn(async move {
             for _ in 0..PACKET_COUNT {
                 match client.ip() {
-                    IpAddr::V4(addr) => client.send(LogonChallengeRequest {
-                        game: 0x00576F57, // WoW\0
-                        version: Version::parse("4.3.4.15595"),
-                        platform: 0x00783836, // x86\0
-                        os: 0x4F5358, // OSX\0
-                        locale: 0x656E5553, // enUS
-                        timezone: 0x3C,
-                        address: addr,
-                        account_name: "pow".to_string()
-                    }).await.expect("Packet couldn't be sent"),
-                    IpAddr::V6(..) => panic!("Not an ipv4 address")
+                    IpAddr::V4(addr) => client
+                        .send(LogonChallengeRequest {
+                            game: 0x00576F57, // WoW\0
+                            version: Version::parse("4.3.4.15595"),
+                            platform: 0x00783836, // x86\0
+                            os: 0x4F5358,         // OSX\0
+                            locale: 0x656E5553,   // enUS
+                            timezone: 0x3C,
+                            address: addr,
+                            account_name: "pow".to_string(),
+                        })
+                        .await
+                        .expect("Packet couldn't be sent"),
+                    IpAddr::V6(..) => panic!("Not an ipv4 address"),
                 }
             }
 
             // Disconnect the client
-            client.disconnect()
-                .await
-                .expect("Client should have disconnected");
+            client.disconnect().await.expect("Client should have disconnected");
         });
 
         // Block until both tasks are complete.
@@ -134,25 +141,27 @@ mod test {
     /// [`TestingProtocol`] but it lacks the signal state and will panic if it suddenly
     /// starts behaving as a [`TestServer`].
     struct ClientProtocol {
-        pub version: u8
+        pub version: u8,
     }
 
     impl GruntProtocol for ClientProtocol {
-        fn version(&self) -> u8 { self.version }
+        fn version(&self) -> u8 {
+            self.version
+        }
         fn set_version(&mut self, version: u8) {
             self.version = version;
         }
 
-        async fn handle_logon_challenge_request<D>(&mut self, _: LogonChallengeRequest, _: &mut D)
-            -> Result<()>
-                where D: WriteExt
+        async fn handle_logon_challenge_request<D>(&mut self, _: LogonChallengeRequest, _: &mut D) -> Result<()>
+        where
+            D: WriteExt,
         {
             Ok(assert!(false, "Should never be called"))
         }
-        
-        async fn handle_logon_proof_request<D>(&mut self, _: LogonProofRequest, _: &mut D)
-            -> Result<()>
-                where D: WriteExt
+
+        async fn handle_logon_proof_request<D>(&mut self, _: LogonProofRequest, _: &mut D) -> Result<()>
+        where
+            D: WriteExt,
         {
             Ok(assert!(false, "Should never be called"))
         }
@@ -161,20 +170,24 @@ mod test {
     /// This is the protocol that is associated with the [`TestingServer`].
     struct ServerProtocol {
         pub version: u8,
-        pub signal: Sender<u32>
+        pub signal: Sender<u32>,
     }
 
     impl GruntProtocol for ServerProtocol {
         fn version(&self) -> u8 {
             self.version
         }
-
         fn set_version(&mut self, version: u8) {
             self.version = version;
         }
 
-        fn handle_logon_challenge_request<D>(&mut self, msg: LogonChallengeRequest, _: &mut D)
-            -> impl Future<Output = Result<()>>  where D: WriteExt
+        fn handle_logon_challenge_request<D>(
+            &mut self,
+            msg: LogonChallengeRequest,
+            _: &mut D,
+        ) -> impl Future<Output = Result<()>>
+        where
+            D: WriteExt,
         {
             async move {
                 assert_eq!(msg.game, 0x00576F57);
@@ -187,18 +200,16 @@ mod test {
                 assert_eq!(msg.locale, 0x656E5553);
                 assert_eq!(msg.account_name, "pow");
 
-                self.signal.send(1)
-                    .await
-                    .expect("Unable to signal");
+                self.signal.send(1).await.expect("Unable to signal");
 
                 Ok(())
             }
         }
-        
+
         // This test does not send this packet.
-        async fn handle_logon_proof_request<D>(&mut self, _: LogonProofRequest, _: &mut D)
-            -> Result<()>
-                where D: WriteExt
+        async fn handle_logon_proof_request<D>(&mut self, _: LogonProofRequest, _: &mut D) -> Result<()>
+        where
+            D: WriteExt,
         {
             Ok(assert!(false, "Should never be called"))
         }
